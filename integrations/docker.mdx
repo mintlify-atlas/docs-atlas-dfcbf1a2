@@ -1,0 +1,263 @@
+---
+title: "Docker deployment for RedQuanta MCP"
+description: "Build and run RedQuanta MCP in Docker with pre-installed security tools including nmap, masscan, ffuf, nikto, gobuster, and hydra."
+keywords: ["docker", "docker-compose", "redquanta", "container", "security tools", "deployment"]
+icon: "docker"
+---
+
+RedQuanta MCP ships with a multi-stage Dockerfile that bundles a full suite of penetration testing tools into the final image. Running in Docker gives you a consistent, sandboxed environment where tools like nmap, masscan, ffuf, nikto, gobuster, and hydra are available regardless of what is installed on the host machine.
+
+## What the Docker setup provides
+
+The Dockerfile uses three build stages:
+
+1. **Builder** — compiles the Node.js application from source using `node:20-alpine`
+2. **Tools** — installs penetration testing tools from `kalilinux/kali-rolling`
+3. **Runtime** — assembles the final image from `node:20-alpine`, copying only the compiled app and tool binaries from the previous stages
+
+The runtime image includes these security tools at `/usr/local/bin/`:
+
+- `nmap` — network discovery and port scanning
+- `masscan` — high-speed port scanning
+- `gobuster` — directory and DNS enumeration
+- `nikto` — web vulnerability scanning
+- `john` — password hash cracking
+- `hydra` — network service brute forcing
+- `ffuf` — fast web directory fuzzing
+
+Wordlists from SecLists are copied to `/app/wordlists/` for use by fuzzing tools.
+
+The container runs as a non-root user (`redquanta`, UID 1001) with `dumb-init` as the process manager, so signals are handled correctly on container shutdown.
+
+## Build the application container
+
+```bash
+docker build -t redquanta-mcp .
+```
+
+This triggers all three build stages. Expect the first build to take several minutes because it downloads the Kali Linux base image and installs tools. Subsequent builds use layer caching and are faster.
+
+## Build the security tools sidecar
+
+For deployments where you want security tools running in a separate container (so the main app container stays minimal), use the dedicated compose file:
+
+```bash
+docker-compose -f docker-security-tools.yml build
+docker-compose -f docker-security-tools.yml up -d
+```
+
+The `security-tools` service uses `kalilinux/kali-rolling` and installs the full tool set at startup, including wordlists from SecLists. It mounts `./vol` into the container at `/opt/redquanta/vol` so tools can write output to the shared jail directory.
+
+The `security-tools-alpine` service provides a lightweight companion using `alpine:latest` with `curl`, `wget`, `nmap-ncat`, and DNS tools for quick lookups and connectivity checks.
+
+## Run with docker-compose
+
+The default `docker-compose.yml` starts the MCP server in REST mode alongside supporting services:
+
+```bash
+docker-compose up -d
+```
+
+This starts four containers:
+
+| Container | Purpose |
+|---|---|
+| `redquanta-mcp` | Main MCP server on port 5891 |
+| `redquanta-jaeger` | OpenTelemetry tracing UI on port 16686 |
+| `redquanta-nmap-fallback` | Nmap fallback container |
+| `redquanta-masscan-fallback` | Masscan fallback container |
+| `redquanta-zap-fallback` | OWASP ZAP proxy on port 8090 |
+
+Check service status:
+
+```bash
+docker-compose ps
+```
+
+Stream logs from the MCP server:
+
+```bash
+docker-compose logs -f redquanta-mcp
+```
+
+## Environment variables
+
+Set these in the `environment` block of `docker-compose.yml` or pass them with `-e` when running `docker run`.
+
+| Variable | Description | Value in default compose |
+|---|---|---|
+| `NODE_ENV` | Runtime environment | `production` |
+| `MCP_MODE` | Server mode — `rest` for HTTP, `stdio` for MCP transport | `rest` |
+| `MCP_PORT` | Port the REST API listens on | `5891` |
+| `JAIL_ROOT` | Filesystem sandbox path inside the container | `/opt/redquanta/vol` |
+| `LOG_LEVEL` | Logging verbosity | `info` |
+| `TELEMETRY_ENDPOINT` | Jaeger trace collector endpoint | `http://jaeger:14268/api/traces` |
+| `DANGEROUS_MODE` | Enable destructive tools | not set (defaults to `false`) |
+
+<Warning>
+The Docker Compose configuration binds the Docker socket (`/var/run/docker.sock`) into the container as read-only. This lets the MCP server spawn fallback tool containers when a tool is not found locally. Mounting the Docker socket gives the container access to the host Docker daemon — review this carefully in shared or production environments.
+</Warning>
+
+## Volume mounts
+
+The default compose file creates three named volumes:
+
+```yaml
+volumes:
+  redquanta_vol:    # Jail directory — tool output and scan results
+  redquanta_logs:   # Application logs
+  redquanta_config: # Server configuration files
+```
+
+`redquanta_vol` is configured as a 1 GB in-memory tmpfs volume owned by UID/GID 1001 (the `redquanta` user). This keeps scan results in memory and avoids writing sensitive data to disk. If you need persistent scan output, replace the tmpfs configuration with a standard local driver:
+
+```yaml
+volumes:
+  redquanta_vol:
+    driver: local
+```
+
+## Security hardening
+
+The compose configuration applies several container-level security controls:
+
+```yaml
+cap_drop:
+  - ALL
+cap_add:
+  - NET_ADMIN
+  - NET_RAW
+security_opt:
+  - no-new-privileges:true
+read_only: true
+tmpfs:
+  - /tmp:noexec,nosuid,size=100m
+```
+
+- All Linux capabilities are dropped, then only `NET_ADMIN` and `NET_RAW` are added back (required for nmap and masscan raw packet operations)
+- `no-new-privileges` prevents privilege escalation via setuid binaries
+- The root filesystem is mounted read-only; only the tmpfs `/tmp` and the named volumes are writable
+
+## Health check
+
+The container runs a built-in health check every 30 seconds:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "fetch('http://localhost:5891/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+```
+
+Query the health endpoint manually:
+
+```bash
+curl http://localhost:5891/health
+```
+
+A healthy response looks like:
+
+```json
+{
+  "status": "healthy",
+  "version": "0.3.0",
+  "uptime": "3600s",
+  "tools": 12
+}
+```
+
+## Using Docker with MCP stdio mode
+
+By default, the container runs in REST mode. To use it as an MCP stdio server (for Claude Desktop or Cursor), override the command:
+
+```bash
+docker run --rm -i \
+  -e MCP_MODE=stdio \
+  -e JAIL_ROOT=/opt/redquanta/vol \
+  -v "$(pwd)/vol:/opt/redquanta/vol" \
+  redquanta-mcp \
+  node dist/server.js --mode=stdio
+```
+
+Then point your MCP client config at this command. For Claude Desktop on Linux or macOS:
+
+```json
+{
+  "mcpServers": {
+    "redquanta-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "MCP_MODE=stdio",
+        "-e", "JAIL_ROOT=/opt/redquanta/vol",
+        "-v", "/absolute/path/to/vol:/opt/redquanta/vol",
+        "redquanta-mcp",
+        "node", "dist/server.js", "--mode=stdio"
+      ]
+    }
+  }
+}
+```
+
+<Note>
+The `-i` flag (interactive) is required when running in stdio mode so Docker keeps stdin open. Without it, the MCP server exits immediately.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Security tools not found inside the container">
+    The tools are copied from the Kali builder stage during `docker build`. If tools are missing, the build may have used a stale cached layer. Force a full rebuild:
+
+    ```bash
+    docker build --no-cache -t redquanta-mcp .
+    ```
+
+    For the sidecar container, tools are installed at runtime startup. If the container exited before installation finished, check the logs:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml logs security-tools
+    ```
+  </Accordion>
+
+  <Accordion title="Permission errors on the jail directory">
+    The container runs as UID 1001. If you mount a host directory as the jail volume, make sure it is owned by or writable by UID 1001:
+
+    ```bash
+    mkdir -p vol
+    chown 1001:1001 vol
+    chmod 755 vol
+    ```
+
+    Then mount it with:
+
+    ```bash
+    docker run ... -v "$(pwd)/vol:/opt/redquanta/vol" redquanta-mcp
+    ```
+  </Accordion>
+
+  <Accordion title="Container exits immediately in stdio mode">
+    Check that you passed the `-i` flag to `docker run`. Without it, stdin is closed and the stdio server shuts down. Also confirm `MCP_MODE=stdio` is set — the default entrypoint starts in REST mode.
+  </Accordion>
+
+  <Accordion title="nmap or masscan fail with raw socket errors">
+    These tools need `NET_RAW` and `NET_ADMIN` capabilities. The default compose file adds both. If you are running with `docker run`, add the capabilities explicitly:
+
+    ```bash
+    docker run --cap-add NET_ADMIN --cap-add NET_RAW ... redquanta-mcp
+    ```
+
+    On some systems (particularly rootless Docker), raw socket operations require running with `--privileged`. Avoid `--privileged` in production — prefer granting only the required capabilities.
+  </Accordion>
+
+  <Accordion title="High memory usage">
+    Switch to production environment settings to reduce logging overhead and enable longer cache TTLs:
+
+    ```bash
+    docker run \
+      -e NODE_ENV=production \
+      -e LOG_LEVEL=warn \
+      -e CACHE_ENABLED=true \
+      -e CACHE_TTL=3600 \
+      redquanta-mcp
+    ```
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,140 @@
+---
+title: "filesystem_ops — Sandboxed Filesystem Operations"
+description: "Parameter reference for filesystem_ops: list, read, write, delete, and upload operations within the RedQuanta security jail, with dangerous mode requirements."
+keywords: ["filesystem_ops", "jailed filesystem", "scan results", "MCP tool", "file management"]
+---
+
+The `filesystem_ops` tool provides controlled access to a sandboxed filesystem jail for managing scan results, wordlists, configuration files, and reports. All operations are bounded by the jail root—paths are resolved relative to the jail directory, and path traversal attempts are blocked at the argument sanitization layer. By default the filesystem is read-only: listing and reading files work without any additional flags. Write and delete operations require `dangerous: true` to be set explicitly, which is an intentional friction point that prevents accidental data modification. The jail structure keeps all RedQuanta data isolated from the host filesystem and other processes.
+
+<Warning>
+Setting `dangerous: true` is required for `write` and `delete` operations. These operations permanently modify or remove files within the jail. Double-check the path before executing.
+</Warning>
+
+## Parameters
+
+<ParamField path="operation" type="string" required>
+  Filesystem operation to perform within the security jail.
+
+  | Value | Description | Requires `dangerous` |
+  |---|---|---|
+  | `list` | Show directory contents | No |
+  | `read` | Retrieve file content | No |
+  | `write` | Create or update a file | Yes |
+  | `delete` | Remove a file | Yes |
+  | `upload` | Transfer a file into the jail | No |
+</ParamField>
+
+<ParamField path="path" type="string">
+  File or directory path within the security jail. All paths are relative to the jail root and cannot reference system directories. Path traversal sequences (e.g., `../`) are rejected.
+</ParamField>
+
+<ParamField path="content" type="string">
+  Content to write to the file. Used only with the `write` operation. Accepts text data, scan results, configuration snippets, or any string content.
+</ParamField>
+
+<ParamField path="dangerous" type="boolean" default="false">
+  Allow potentially destructive operations (`write` and `delete`). The filesystem is read-only by default. Set to `true` only when file modification is explicitly required.
+</ParamField>
+
+## Examples
+
+<Tabs>
+  <Tab title="List directory">
+    List all files in the results directory.
+
+    ```json
+    {
+      "tool": "filesystem_ops",
+      "arguments": {
+        "operation": "list",
+        "path": "/results"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Read file">
+    Retrieve the contents of a saved scan result.
+
+    ```json
+    {
+      "tool": "filesystem_ops",
+      "arguments": {
+        "operation": "read",
+        "path": "/results/nmap-output.txt"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Write file">
+    Save scan results to a named file. Requires `dangerous: true`.
+
+    ```json
+    {
+      "tool": "filesystem_ops",
+      "arguments": {
+        "operation": "write",
+        "path": "/results/scan-output.txt",
+        "content": "Scan results data...",
+        "dangerous": true
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Delete file">
+    Remove a file from the jail. Requires `dangerous: true`.
+
+    ```json
+    {
+      "tool": "filesystem_ops",
+      "arguments": {
+        "operation": "delete",
+        "path": "/results/old-scan.txt",
+        "dangerous": true
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Upload file">
+    Transfer an external file into the jail for use in subsequent operations.
+
+    ```json
+    {
+      "tool": "filesystem_ops",
+      "arguments": {
+        "operation": "upload",
+        "path": "/wordlists/custom.txt"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+The jail root is configured by the `JAIL_ROOT` environment variable at server startup. All paths passed to `filesystem_ops` are resolved relative to this root. See the [environment variables reference](/reference/environment-variables) for configuration details.
+</Note>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the operation completed without error.
+</ResponseField>
+
+<ResponseField name="operation" type="string">
+  The operation that was performed.
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  The resolved path within the jail.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Operation output. For `list`, this is a directory listing. For `read`, this is the file contents. For `write` and `delete`, this is a confirmation message.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message, including path traversal rejection messages.
+</ResponseField>

@@ -1,80 +1,226 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quickstart: run your first RedQuanta scan"
+description: "Clone, build, and connect RedQuanta MCP to Claude Desktop in under ten minutes. Run a real network scan using plain English."
+keywords: ["redquanta", "quickstart", "install", "claude desktop", "nmap", "mcp setup"]
 ---
 
-## Get started in three steps
+This guide takes you from zero to a working RedQuanta MCP server connected to Claude Desktop. By the end you will have the server running in `stdio` mode and be able to ask Claude to run an Nmap scan against a target you authorize.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you start, make sure you have the following installed:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- **Node.js 20 or later** — check with `node --version`
+- **Git** — check with `git --version`
+- **Claude Desktop** — download from [claude.ai/download](https://claude.ai/download)
 
-### Step 2: Deploy your changes
+<Note>
+RedQuanta requires Node.js 20+. Earlier versions will fail at startup. If `node --version` shows v18 or below, upgrade before continuing.
+</Note>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Set up RedQuanta
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/sc4rfurry/RedQuanta-MCP.git
+    cd RedQuanta-MCP
+    ```
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Build the project">
+    ```bash
+    npm run build
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    This compiles the TypeScript source and generates API documentation assets. You should see no errors. If you do, confirm your Node.js version matches the requirement.
+  </Step>
+
+  <Step title="Create the jail directory">
+    RedQuanta confines all filesystem operations to a single directory called the jail root. Create it now:
+
+    ```bash
+    mkdir -p vol
+    ```
+
+    This `vol/` directory becomes `JAIL_ROOT` — the only place RedQuanta can read or write files during tool execution.
+  </Step>
+
+  <Step title="Configure Claude Desktop">
+    Open (or create) the Claude Desktop configuration file for your operating system:
+
+    <Tabs>
+      <Tab title="macOS">
+        ```
+        ~/Library/Application Support/Claude/claude_desktop_config.json
+        ```
+      </Tab>
+      <Tab title="Linux">
+        ```
+        ~/.config/claude/claude_desktop_config.json
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```
+        %APPDATA%\Claude\claude_desktop_config.json
+        ```
+      </Tab>
+    </Tabs>
+
+    Add the following configuration, replacing the paths with the actual location of your cloned repository:
+
+    <Tabs>
+      <Tab title="macOS / Linux">
+        ```json claude_desktop_config.json
+        {
+          "mcpServers": {
+            "redquanta-mcp": {
+              "command": "node",
+              "args": ["/Users/username/RedQuanta-MCP/dist/server.js"],
+              "cwd": "/Users/username/RedQuanta-MCP",
+              "env": {
+                "NODE_ENV": "production",
+                "MCP_MODE": "stdio",
+                "MCP_LOG_LEVEL": "info",
+                "LOG_LEVEL": "info",
+                "WEB_SEARCH_ENABLED": "true",
+                "CACHE_ENABLED": "true",
+                "CACHE_TTL": "600",
+                "DANGEROUS_MODE": "false",
+                "DOCKER_ENABLED": "true",
+                "JAIL_ROOT": "/Users/username/RedQuanta-MCP/vol",
+                "REAL_EXECUTION": "true",
+                "SIMULATION_MODE": "false",
+                "NODE_OPTIONS": "--max-old-space-size=2048",
+                "UV_THREADPOOL_SIZE": "4"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```json claude_desktop_config.json
+        {
+          "mcpServers": {
+            "redquanta-mcp": {
+              "command": "node",
+              "args": ["D:\\Projects\\RedQuanta-MCP\\dist\\server.js"],
+              "cwd": "D:\\Projects\\RedQuanta-MCP",
+              "env": {
+                "NODE_ENV": "production",
+                "MCP_MODE": "stdio",
+                "MCP_LOG_LEVEL": "info",
+                "LOG_LEVEL": "info",
+                "WEB_SEARCH_ENABLED": "true",
+                "CACHE_ENABLED": "true",
+                "CACHE_TTL": "600",
+                "DANGEROUS_MODE": "false",
+                "DOCKER_ENABLED": "true",
+                "JAIL_ROOT": "D:\\Projects\\RedQuanta-MCP\\vol",
+                "REAL_EXECUTION": "true",
+                "SIMULATION_MODE": "false",
+                "NODE_OPTIONS": "--max-old-space-size=2048",
+                "UV_THREADPOOL_SIZE": "4"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+
+    <Warning>
+    Set `DANGEROUS_MODE` to `false` until you are familiar with the platform. Dangerous mode enables destructive operations such as file writes, SQL injection testing, and password cracking — only enable it in authorized testing environments.
+    </Warning>
+  </Step>
+
+  <Step title="Restart Claude Desktop">
+    Close Claude Desktop completely, wait a few seconds for all processes to exit, then reopen it. Claude Desktop reads the MCP configuration at startup.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+Open a new conversation in Claude Desktop and type:
+
+```
+What security tools are available through RedQuanta MCP?
+```
+
+Claude should respond with a list that includes tools like `nmap_scan`, `ffuf_fuzz`, `nikto_scan`, `workflow_enum`, and others. If you see this, the server is connected and ready.
+
+## Run your first tool
+
+Try these natural language prompts to get started. Replace the targets with systems you own or have written authorization to test.
+
+```
+Scan 192.168.1.1 for open ports using nmap and tell me what services are running.
+```
+
+```
+What devices are live on my home network at 192.168.1.0/24?
+```
+
+```
+Run a web vulnerability scan on http://localhost:8080 and summarize the findings.
+```
+
+```
+What security tools are available, and which ones are safe to run without dangerous mode?
+```
+
+Claude will select the appropriate RedQuanta tool, execute it, and return structured results with security recommendations.
+
+<Tip>
+Start with safe, read-only scans before exploring more advanced workflows. Ask Claude "What security tools are available?" to get a list of all registered tools and their danger levels.
+</Tip>
+
+## Confirm the server is healthy
+
+If you want to verify the server works independently of Claude Desktop, switch to REST mode and use the health endpoint:
+
+```bash
+MCP_MODE=rest node dist/server.js &
+curl http://localhost:5891/health
+```
+
+A healthy response looks like this:
+
+```json
+{
+  "status": "healthy",
+  "version": "0.3.0",
+  "uptime": "12s",
+  "tools": 12
+}
+```
+
+You can also run the built-in system check:
+
+```bash
+node dist/cli.js doctor
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Full installation options" icon="wrench" href="/installation">
+    Docker setup, production builds, Windows startup scripts, and environment variable reference.
+  </Card>
+  <Card title="Claude Desktop integration" icon="robot" href="/integrations/claude-desktop">
+    Advanced configuration, performance tuning, and troubleshooting for the Claude Desktop integration.
+  </Card>
+  <Card title="Security tools" icon="shield" href="/tools/overview">
+    Every tool RedQuanta provides, with arguments, prompts, and danger levels.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    How the MCP server, workflow engine, and security layers fit together.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

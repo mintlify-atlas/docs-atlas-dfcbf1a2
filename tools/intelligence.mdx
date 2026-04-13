@@ -1,0 +1,301 @@
+---
+title: "OSINT and intelligence tools: ddg_search, domain_intel, and more"
+description: "Gather threat intelligence and map attack surfaces using ddg_search, domain_intel, and web_search in RedQuanta MCP. Requires WEB_SEARCH_ENABLED=true."
+keywords: ["OSINT", "threat intelligence", "ddg_search", "domain_intel", "CVE research", "MCP intelligence tools"]
+---
+
+Intelligence gathering is the phase where you build context around a target before active testing begins. RedQuanta MCP's intelligence tools connect to external data sources to retrieve WHOIS registrations, DNS records, SSL certificates, subdomain lists, and open-web search results—without sending a single packet to the target directly. All four tools require the server to start with `WEB_SEARCH_ENABLED=true`.
+
+<Note>
+Intelligence tools only appear in your MCP client's tool list when the server is started with `WEB_SEARCH_ENABLED=true`. If you don't see `ddg_search`, `ddg_spice`, `domain_intel`, or `web_search`, check your server configuration.
+</Note>
+
+## ddg_search
+
+`ddg_search` connects to DuckDuckGo and supports five distinct search modes: web, images, videos, news, and autocomplete. In a security context, you use web and news searches to research CVEs, find public vulnerability disclosures, and gather OSINT about targets. The image and video modes support visual methodology research and training.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="query (required)">
+    The search query. DuckDuckGo supports standard Boolean operators and site-specific operators:
+
+    ```
+    CVE-2024-1234
+    Apache log4j vulnerability
+    site:example.com filetype:pdf
+    "company name" breach 2024
+    ```
+
+    Use specific technical terms for better signal in security research. CVE numbers, product names with version strings, and vendor security advisory patterns all work well.
+  </Accordion>
+  <Accordion title="searchType (optional, default: web)">
+    | Type | Returns | Security use case |
+    |------|---------|------------------|
+    | `web` | Web pages and articles | CVE research, vendor advisories, exploitation write-ups |
+    | `images` | Image results | Methodology diagrams, network topology examples |
+    | `videos` | Video results | Conference talks, proof-of-concept demonstrations |
+    | `news` | Recent news articles | Recent disclosures, active exploitation reports |
+    | `autocomplete` | Search suggestions | Explore related terms around a target or technology |
+  </Accordion>
+  <Accordion title="maxResults (optional, default: 10, range: 1–50)">
+    Number of results to return. Higher values provide more comprehensive coverage but take longer. For focused CVE research, 10 results is usually sufficient. For broad OSINT gathering, increase to 20–30.
+  </Accordion>
+  <Accordion title="safeSearch (optional, default: true)">
+    When `true`, DuckDuckGo's strict safe search filtering is applied. For security research, you may want to set this to `false` to ensure exploit code, PoC write-ups, and full disclosure content are not filtered out.
+  </Accordion>
+  <Accordion title="region (optional)">
+    A region code for localized results. Useful when researching targets in specific geographies or looking for non-English sources:
+
+    - `us-en` — United States English
+    - `uk-en` — United Kingdom English
+    - `wt-wt` — No region (worldwide, default when omitted)
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="CVE research">
+    Research a specific CVE to understand its impact, affected versions, and available patches before testing.
+
+    ```json
+    {
+      "name": "ddg_search",
+      "arguments": {
+        "query": "CVE-2024 Apache vulnerability",
+        "searchType": "web",
+        "maxResults": 10,
+        "safeSearch": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="OSINT document gathering">
+    Find public documents associated with a target domain. PDF and document files often contain internal information.
+
+    ```json
+    {
+      "name": "ddg_search",
+      "arguments": {
+        "query": "site:example.com filetype:pdf",
+        "searchType": "web",
+        "maxResults": 20,
+        "safeSearch": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Recent breach or disclosure news">
+    Check for recent security disclosures related to a technology or organization.
+
+    ```json
+    {
+      "name": "ddg_search",
+      "arguments": {
+        "query": "example.com security breach data leak",
+        "searchType": "news",
+        "maxResults": 10,
+        "safeSearch": false
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## ddg_spice
+
+`ddg_spice` accesses DuckDuckGo's specialized Spice APIs, which provide structured data from specific services. For security work, the `dns` spice type is the most valuable—it resolves DNS records for domains without querying the target directly through your toolchain.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="spiceType (required)">
+    | Type | What it does | Security use case |
+    |------|-------------|------------------|
+    | `dns` | Resolves DNS records for a domain | Passive DNS reconnaissance |
+    | `stocks` | Retrieves stock price data | Target company research |
+    | `currency` | Converts currency amounts | Financial target context |
+    | `weather` | Gets weather for a location | Physical security context |
+    | `dictionary` | Looks up word definitions | Report writing |
+    | `time` | Gets current time in a timezone | Engagement scheduling |
+    | `thesaurus` | Finds synonyms | Report writing |
+    | `expandUrl` | Expands shortened URLs | Phishing and link analysis |
+  </Accordion>
+  <Accordion title="query (conditional)">
+    Required for: `stocks` (stock ticker symbol), `dictionary`, `thesaurus`, `time`, `weather`, and `dns` (domain name).
+
+    ```
+    "query": "example.com"       // for dns
+    "query": "AAPL"              // for stocks
+    "query": "New York"          // for weather and time
+    ```
+  </Accordion>
+  <Accordion title="fromCurrency / toCurrency / amount (currency only)">
+    Required when `spiceType` is `currency`. Specify ISO 4217 currency codes and an amount to convert:
+
+    ```json
+    {
+      "spiceType": "currency",
+      "fromCurrency": "USD",
+      "toCurrency": "EUR",
+      "amount": 100
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### DNS lookup for security research
+
+The `dns` spice type is particularly useful for passive reconnaissance. It resolves DNS records for a domain through DuckDuckGo's infrastructure rather than issuing DNS queries directly from your testing environment.
+
+```json
+{
+  "name": "ddg_spice",
+  "arguments": {
+    "spiceType": "dns",
+    "query": "example.com"
+  }
+}
+```
+
+Use this to:
+- Confirm what IP addresses a domain resolves to without appearing in server logs
+- Identify mail server (MX) records that reveal the email infrastructure
+- Find name servers (NS) that indicate DNS hosting providers
+- Discover TXT records that may expose SPF, DKIM, and DMARC configurations
+
+---
+
+## domain_intel
+
+`domain_intel` performs comprehensive passive reconnaissance on a domain by aggregating data from multiple public sources: WHOIS registration data, all DNS record types, SSL certificate details (including Subject Alternative Names), and optionally a full subdomain enumeration using certificate transparency logs and DNS brute force.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="domain (required)">
+    The domain to analyze. Provide the apex domain (without `www` or other subdomains) for the broadest WHOIS and DNS coverage:
+
+    ```
+    example.com
+    targetcompany.org
+    ```
+  </Accordion>
+  <Accordion title="includeSubdomains (optional, default: false)">
+    When `true`, the tool adds subdomain enumeration on top of the base domain analysis. It uses three techniques:
+
+    1. **Certificate transparency logs** — Queries crt.sh and similar databases for SSL certificates issued to `*.example.com`, which reveal historically registered subdomains
+    2. **DNS brute force** — Iterates through common subdomain names to discover live hosts
+    3. **Search engine queries** — Looks for indexed subdomain references in web search results
+
+    Subdomain enumeration significantly increases scan time. Use it when you need to map the full external attack surface of an organization.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Basic domain analysis">
+    Collect WHOIS registration data, DNS records, and SSL certificate details for a domain.
+
+    ```json
+    {
+      "name": "domain_intel",
+      "arguments": {
+        "domain": "example.com",
+        "includeSubdomains": false
+      }
+    }
+    ```
+
+    This returns registrar information, registration and expiry dates, name servers, A/AAAA/MX/TXT records, and the SSL certificate chain for the domain.
+  </Tab>
+  <Tab title="Full attack surface mapping">
+    Enumerate all subdomains in addition to the base domain analysis. Use this to identify all externally accessible services before beginning active testing.
+
+    ```json
+    {
+      "name": "domain_intel",
+      "arguments": {
+        "domain": "example.com",
+        "includeSubdomains": true
+      }
+    }
+    ```
+
+    <Note>
+    Subdomain enumeration can take several minutes depending on the domain's size and the responsiveness of external data sources. The result includes a deduplicated list of discovered subdomains and their IP resolutions.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## web_search
+
+`web_search` is a security-focused wrapper around a privacy-respecting search engine, optimized for queries about CVEs, security advisories, exploitation techniques, and target-specific OSINT. Unlike `ddg_search`, it applies security-specific result ranking and filtering to surface more relevant results for penetration testing contexts.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="query (required)">
+    The search query. Effective patterns for security research:
+
+    ```
+    CVE-2024-1234 exploit
+    Apache 2.4.49 path traversal
+    site:example.com
+    "target company" -site:targetcompany.com
+    ```
+  </Accordion>
+  <Accordion title="maxResults (optional, default: 10, range: 1–50)">
+    Number of results to return. Use the default for focused queries. Increase to 20–30 for broad OSINT sweeps.
+  </Accordion>
+  <Accordion title="safeSearch (optional, default: true)">
+    Safe search filtering. Set to `false` for security research to avoid filtering exploit documentation and full disclosure content.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+```json
+{
+  "name": "web_search",
+  "arguments": {
+    "query": "CVE-2024 Apache vulnerability",
+    "maxResults": 10,
+    "safeSearch": false
+  }
+}
+```
+
+```json
+{
+  "name": "web_search",
+  "arguments": {
+    "query": "site:example.com filetype:pdf",
+    "maxResults": 20,
+    "safeSearch": false
+  }
+}
+```
+
+---
+
+## Natural language prompts
+
+When using an AI assistant connected to RedQuanta MCP, describe intelligence-gathering tasks in plain language:
+
+- "Research recent vulnerabilities in Apache Tomcat 9.0"
+- "Find all DNS records for example.com"
+- "Look up the WHOIS registration and subdomains for targetcompany.com"
+- "Search for any public data breaches involving example.com"
+- "Resolve the DNS records for api.example.com using the DuckDuckGo spice API"
+- "Find news articles about security incidents at example.com from the last 6 months"
+
+<Tip>
+Intelligence gathering is non-invasive — these tools query public data sources rather than probing the target directly. Run intelligence tools first to build situational awareness before any active scanning with nmap or ffuf.
+</Tip>

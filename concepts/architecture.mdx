@@ -1,0 +1,131 @@
+---
+title: "RedQuanta MCP architecture and system design"
+description: "How RedQuanta MCP layers the MCP protocol, a tool registry, security controls, and an execution engine to safely run penetration testing tools for AI clients."
+keywords: ["architecture", "MCP server", "workflow engine", "plugin system", "tool registry", "execution engine"]
+---
+
+RedQuanta MCP is a TypeScript server that sits between an AI client and the operating system. When your LLM asks to run a port scan, the request travels through a layered stack: the MCP or REST interface receives it, the security layer validates every argument, the execution engine runs the approved command, and the audit logger records the outcome before the result travels back. Each layer has a single responsibility, and no layer can be bypassed by the one above it.
+
+## System layers
+
+The four layers of the stack each enforce a boundary:
+
+<CardGroup cols={2}>
+  <Card title="MCP/REST API server" icon="server">
+    Accepts tool calls, resource reads, and prompt requests. In stdio mode this is pure JSON-RPC; in REST mode it is a Fastify HTTP server with Swagger UI.
+  </Card>
+  <Card title="Tool registry" icon="list">
+    Maps tool names such as `nmap_scan` or `workflow_enum` to their implementations. The registry is populated at startup and exposes a `ListTools` handler to MCP clients.
+  </Card>
+  <Card title="Security layer" icon="shield">
+    ArgGuard validates every command and argument against `config/allowedCommands.json` and `config/deniedPatterns.json`. PathGuard confines all file operations to `JAIL_ROOT`.
+  </Card>
+  <Card title="Execution engine" icon="gear">
+    CommandRunner runs the validated binary, collects stdout and stderr, and scrubs sensitive data from the output. WorkflowEngine sequences multiple tool calls into multi-phase engagements.
+  </Card>
+</CardGroup>
+
+## Major subsystems
+
+### MCP/REST API server
+
+`RedQuantaMCPServer` (defined in `src/server.ts`) initializes three MCP capability groups at startup:
+
+- **Tools** — executable actions the LLM can invoke
+- **Resources** — read-only data exposed at `redquanta://` URIs
+- **Prompts** — parameterized prompt templates for guided workflows
+
+When `MCP_MODE` is `rest` or `hybrid`, the server also spins up a Fastify instance on port 5891 with `@fastify/helmet`, `@fastify/rate-limit`, `@fastify/cors`, and `@fastify/swagger`.
+
+### WorkflowEngine
+
+`WorkflowEngine` (defined in `src/core/workflowEngine.ts`) orchestrates multi-step penetration testing phases. It holds a `Map<string, ToolWrapper>` and coordinates `ArgGuard`, `PathGuard`, `FilesystemManager`, and `CommandRunner` in a single object. Workflows support concurrent tool execution and carry optional coaching output for beginner testers.
+
+Available workflow phases:
+
+| Phase | Tool name | What it does |
+|---|---|---|
+| Enumeration | `workflow_enum` | Host discovery, port scanning, service detection |
+| Scanning | `workflow_scan` | Vulnerability identification across discovered services |
+
+### PluginSystem
+
+`PluginSystem` (defined in `src/core/pluginSystem.ts`) discovers and loads `PluginManifest` descriptors from configurable directories (default: `./plugins`, `./custom-tools`, and the path set in `REDQUANTA_PLUGIN_PATH`). Each plugin declares a `dangerLevel` of `safe`, `caution`, or `dangerous`. Plugins with `dangerous` danger level only load when `allowDangerous` is `true`.
+
+## Tool request flow
+
+Every tool call follows the same path through the system:
+
+<Steps>
+  <Step title="LLM issues a tool call">
+    The AI client sends a `tools/call` JSON-RPC request with the tool name and arguments over stdin (stdio mode) or as an HTTP POST (REST mode).
+  </Step>
+  <Step title="MCP server dispatches">
+    The `CallToolRequestSchema` handler in `src/server.ts` receives the request, generates a UUID execution ID, and writes a `tool_execution_started` audit event.
+  </Step>
+  <Step title="ArgGuard validates">
+    `ArgGuard.validateCommand()` checks the command against the allowlist, verifies each flag matches the per-command `allowedArgs` list, and rejects anything matching patterns in `deniedPatterns.json`.
+  </Step>
+  <Step title="CommandRunner executes">
+    The validated binary runs via `execa`. If the tool binary is absent locally, the server falls back to a Docker container with `--cap-drop ALL`, `--read-only`, and `--no-new-privileges`.
+  </Step>
+  <Step title="Output is cleaned and returned">
+    `ArgGuard.scrubSensitiveData()` redacts credentials and private IPs from stdout. In stdio mode, `cleanResultForMCP()` strips ANSI escape sequences and emoji before JSON serialization.
+  </Step>
+  <Step title="AuditLogger records the outcome">
+    A `tool_execution_completed` or `tool_execution_failed` event is appended to the daily JSONL log file with the tool name, execution ID, and success/failure outcome.
+  </Step>
+  <Step title="Response returns to the LLM">
+    The `content` array with a `text` block containing the JSON result is sent back over the MCP transport or as an HTTP response body.
+  </Step>
+</Steps>
+
+## MCP capabilities
+
+### Tools
+
+The server registers ten tools across four categories:
+
+| Category | Tools |
+|---|---|
+| Network scanning | `nmap_scan`, `masscan_scan` |
+| Web testing | `ffuf_fuzz`, `nikto_scan` |
+| Workflows | `workflow_enum`, `workflow_scan` |
+| Intelligence | `web_search`, `ddg_search`, `ddg_spice`, `domain_intel` |
+| System | `filesystem_ops`, `plugin_system` |
+
+### Resources
+
+Resources expose read-only server data to MCP clients. You can fetch them with a `resources/read` request:
+
+| URI | Content type | Description |
+|---|---|---|
+| `redquanta://config` | `application/json` | Current mode, jail root, feature flags, and capability lists |
+| `redquanta://tools` | `application/json` | All registered tools grouped by category |
+| `redquanta://security` | `text/markdown` | Ethical guidelines and safety best practices |
+| `redquanta://status` | `application/json` | Uptime, memory usage, active connections, and tool count |
+
+### Prompts
+
+Prompts are parameterized templates that guide the LLM through security workflows:
+
+| Prompt name | Required arguments | Purpose |
+|---|---|---|
+| `pentest_coaching` | `experience_level`, `target_type` | Step-by-step guidance tuned to beginner, intermediate, or advanced testers |
+| `vulnerability_analysis` | `scan_results` | Structured analysis of raw tool output with remediation recommendations |
+| `methodology_guide` | `testing_scenario` | Phase-by-phase methodology for external pentests, internal assessments, and web app tests |
+
+## Caching
+
+The server uses `NodeCache` (the `node-cache` package) with two configuration knobs:
+
+```bash
+CACHE_ENABLED=true   # set to false to disable
+CACHE_TTL=600        # seconds; default 10 minutes
+```
+
+The cache is initialized with `checkperiod: 120` (expired-key sweep every 2 minutes) and `useClones: false` for performance. Tool results that are expensive to compute—such as large network scans—benefit most from caching during iterative analysis sessions.
+
+<Note>
+Caching is enabled by default. Set `CACHE_TTL=1800` in production environments where scan results are expected to remain valid for longer periods.
+</Note>

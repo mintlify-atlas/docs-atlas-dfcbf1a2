@@ -1,0 +1,285 @@
+---
+title: 'Filesystem Jail and Path Validation in RedQuanta MCP'
+description: 'How PathGuard enforces JAIL_ROOT, validates paths against traversal attacks, controls file extensions, and how to customize allowed paths for your deployment.'
+keywords: ['filesystem jail', 'path validation', 'PathGuard', 'JAIL_ROOT', 'path traversal', 'allowed paths', 'security sandbox']
+---
+
+Every file operation in RedQuanta MCP passes through `PathGuard`, a validation layer that resolves paths to their canonical form and verifies they remain inside the configured jail directory. The jail is anchored to the `JAIL_ROOT` environment variable (`/tmp/redquanta` by default) and cannot be escaped by any combination of relative segments, URL encoding, or symlinks. Operations that would read or write outside this boundary are rejected before they reach the filesystem.
+
+## The filesystem jail
+
+All file access — tool output files, wordlists, reports, uploads — must resolve to a path inside `JAIL_ROOT`. On startup, `PathGuard` creates the jail directory if it does not exist (with `chmod 755`) and pre-creates a set of standard subdirectories:
+
+```
+$JAIL_ROOT/
+├── tmp/
+├── temp/
+├── reports/
+├── uploads/
+├── downloads/
+├── wordlists/
+├── payloads/
+├── output/
+├── results/
+├── logs/
+├── config/
+├── data/
+├── backup/
+├── archive/
+├── scan-results/
+├── nmap-results/
+├── masscan-results/
+├── ffuf-results/
+├── nikto-results/
+├── hydra-results/
+├── tools/
+├── scripts/
+└── plugins/
+```
+
+Any path whose first directory component (relative to `JAIL_ROOT`) is not in this list is rejected, even if the absolute path is otherwise inside the jail.
+
+<Note>
+  The jail root directory itself is determined at startup. On Linux/macOS, `PathGuard` tries `config/allowedPaths.json`'s `jailRoot` first, then falls back through `jailRootAlternatives`. The `JAIL_ROOT` environment variable overrides all of these.
+</Note>
+
+## How path validation works
+
+`PathGuard.validatePath(inputPath, allowWrite?)` applies the following checks in sequence:
+
+1. **Environment variable expansion** — on Windows, `%VAR%` references are expanded before processing.
+2. **Path normalization** — separators are normalized for the current platform.
+3. **Canonicalization** — the path is resolved to an absolute canonical path using `path.resolve()`. Relative inputs are anchored to `JAIL_ROOT`.
+4. **Jail boundary check** — `path.relative(JAIL_ROOT, canonicalPath)` must not begin with `..` and must not be an absolute path itself. Any path that would escape the jail returns `isValid: false` with reason `Path escapes jail root`.
+5. **Traversal pattern scan** — the original input is checked against traversal patterns regardless of canonicalization result (catches encoded attacks before they are decoded):
+
+   | Pattern | Example |
+   |---------|---------|
+   | `../` | `../../etc/passwd` |
+   | `..\` | `..\windows\system32` |
+   | `%2e%2e%2f` | URL-encoded `../` |
+   | `%252e%252e%252f` | Double URL-encoded `../` |
+   | `%5c` | URL-encoded `\` |
+   | `%2f` | URL-encoded `/` |
+
+6. **Denied extension check** — the file extension must not appear in `deniedExtensions`.
+7. **Allowed extension check** — if `allowedExtensions` is non-empty, the extension must be in the list.
+8. **Directory allowlist** — the first path component relative to `JAIL_ROOT` must be in `allowedDirectories`.
+9. **File size check** — if the file already exists, its size must not exceed `maxFileSize` (100 MB).
+10. **Write permission** — write operations require `allowWrite=true` and the configuration must not have `readOnlyByDefault: true`, or write operations must not be in the `requiresDangerousFlag` list.
+
+If all checks pass, `validatePath` returns:
+
+```typescript
+{
+  isValid: true,
+  canonicalPath: "/opt/redquanta/vol/reports/scan.xml",
+  relativePath: "reports/scan.xml",
+  isWritable: false,   // true only if allowWrite=true and DANGEROUS_MODE is on
+  size: 4096,          // bytes, if file exists
+  exists: true
+}
+```
+
+On any failed check, `isValid` is `false` and `reason` describes why. The operation is blocked and the rejection is written to the audit log.
+
+<Warning>
+  Write, delete, execute, modify, and create operations are gated behind `DANGEROUS_MODE=true`. In standard mode, all filesystem operations are read-only.
+</Warning>
+
+## Allowed and denied paths
+
+<Tabs>
+  <Tab title="Linux / macOS">
+    ### Allowed paths
+
+    The following paths (relative to `JAIL_ROOT`) are accessible by default:
+
+    ```json config/allowedPaths.json
+    {
+      "allowedPaths": ["/", "/tmp", "/wordlists", "/reports", "/uploads", "/downloads", "/configs", "/scripts"],
+      "allowedDirectories": [
+        "tmp", "temp", "reports", "uploads", "downloads", "wordlists", "payloads",
+        "output", "results", "logs", "config", "data", "backup", "archive",
+        "scan-results", "nmap-results", "masscan-results", "ffuf-results",
+        "nikto-results", "hydra-results", "tools", "scripts", "plugins"
+      ]
+    }
+    ```
+
+    ### Denied paths
+
+    These system paths are denied regardless of `JAIL_ROOT` configuration:
+
+    ```json config/allowedPaths.json
+    {
+      "deniedPaths": [
+        "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+        "/root", "/home", "/var", "/opt", "/proc",
+        "/sys", "/dev", "/boot", "/mnt", "/media",
+        "/run", "/srv", "/tmp", "/lost+found"
+      ]
+    }
+    ```
+
+    ### Allowed file extensions
+
+    ```
+    .txt  .md  .json  .xml  .html  .htm  .csv  .log
+    .conf  .cfg  .ini  .py  .js  .ts  .sh  .bat  .ps1
+    .yaml  .yml  .toml  .sql  .lst  .properties  .env
+    .db  .sqlite  .sqlite3
+    .pdf  .doc  .docx  .xls  .xlsx  .ppt  .pptx
+    .png  .jpg  .jpeg  .gif  .bmp  .svg  .ico
+    .zip  .tar  .gz  .bz2  .xz  .7z
+    .pem  .crt  .key  .p12  .pfx
+    ```
+
+    ### Denied file extensions
+
+    ```
+    .exe  .dll  .sys  .msi  .bat  .cmd  .ps1  .vbs  .js  .scr
+    .pif  .com  .cpl  .msc  .jar  .class  .war  .ear
+    .sh  .bash  .zsh  .fish  .csh  .tcsh
+    .py  .rb  .pl  .php  .jsp  .asp  .aspx
+    .bin  .run  .app  .deb  .rpm  .dmg  .pkg
+    .so  .dylib  .a  .lib  .o  .obj
+    ```
+
+    ### Security settings
+
+    | Setting | Value | Description |
+    |---------|-------|-------------|
+    | `readOnlyByDefault` | `true` | All operations are read-only unless `DANGEROUS_MODE=true`. |
+    | `enforceCanonicalPaths` | `true` | Paths are always resolved to canonical form before validation. |
+    | `blockPathTraversal` | `true` | Traversal patterns in the input string cause immediate rejection. |
+    | `blockSymlinks` | `true` | Symbolic links are not followed. |
+    | `blockJunctions` | `true` | Directory junctions are not followed. |
+    | `blockHardlinks` | `true` | Hard links to files outside the jail are blocked. |
+    | `maxFileSize` | 100 MB | Individual files larger than 100 MB are rejected. |
+    | `maxTotalSize` | 1 GB | Total jail directory size limit. |
+  </Tab>
+
+  <Tab title="Windows">
+    The Windows configuration (`config/allowedPaths-windows.json`) is loaded automatically when running on `win32`.
+
+    ### Jail root
+
+    ```json config/allowedPaths-windows.json
+    {
+      "jailRoot": "C:\\RedQuanta\\vol",
+      "jailRootAlternatives": [
+        "C:\\RedQuanta\\vol",
+        "C:\\Temp\\redquanta",
+        "%TEMP%\\redquanta",
+        "%USERPROFILE%\\AppData\\Local\\RedQuanta\\vol"
+      ]
+    }
+    ```
+
+    `PathGuard` tries each alternative in order and uses the first path it can create and write to.
+
+    ### Windows-specific restrictions
+
+    | Setting | Value | Description |
+    |---------|-------|-------------|
+    | `allowedDrives` | `C:`, `D:`, `E:`, `F:` | Paths on other drive letters are rejected. |
+    | `allowUNCPaths` | `false` | `\\server\share` paths are always blocked. |
+    | `allowNetworkDrives` | `false` | Mapped network drives are not accessible. |
+    | `caseSensitive` | `false` | Path comparison is case-insensitive. |
+    | `maxPathLength` | 260 | Paths longer than 260 characters are rejected (Windows MAX_PATH limit). |
+    | `respectNTFSPermissions` | `true` | NTFS ACLs are enforced in addition to PathGuard rules. |
+    | `allowHiddenFiles` | `false` | Files with the hidden attribute are not accessible. |
+    | `allowSystemFiles` | `false` | Files with the system attribute are not accessible. |
+    | `checksumValidation` | `true` | File integrity checksums are validated on read. |
+
+    ### Reserved Windows names
+
+    The following names are blocked regardless of extension (Windows reserved device names):
+
+    ```
+    CON  PRN  AUX  NUL
+    COM1  COM2  COM3  COM4  COM5  COM6  COM7  COM8  COM9
+    LPT1  LPT2  LPT3  LPT4  LPT5  LPT6  LPT7  LPT8  LPT9
+    ```
+
+    ### Audit logging
+
+    On Windows, filesystem access events are written to `logs\filesystem-audit-windows.jsonl` with rotation at 10 MB per file, keeping the 7 most recent files.
+  </Tab>
+</Tabs>
+
+## What happens on an invalid path
+
+When `validatePath` rejects a path:
+
+1. The operation is immediately blocked — no read or write occurs.
+2. An audit log entry is written to `logs/audit-YYYY-MM-DD.jsonl` with:
+   - The original input path
+   - The resolved canonical path (if available)
+   - The rejection reason
+   - The tool name and execution ID
+3. The calling tool receives an error response describing why the path was rejected (e.g., `Path escapes jail root`, `File extension '.exe' is denied`, `Directory 'etc' is not in allowed list`).
+
+The audit log format is newline-delimited JSON (JSONL). Each entry includes a timestamp, action type, and full context for forensic review.
+
+## Customizing allowed paths for your deployment
+
+To adjust the filesystem jail for your environment, edit `config/allowedPaths.json` (Linux/macOS) or `config/allowedPaths-windows.json` (Windows).
+
+### Change the jail root
+
+```json config/allowedPaths.json
+{
+  "jailRoot": "/data/pentest/jail",
+  "jailRootAlternatives": [
+    "/data/pentest/jail",
+    "/tmp/redquanta"
+  ]
+}
+```
+
+You can also override the jail root at runtime without modifying the config file:
+
+```bash
+JAIL_ROOT=/data/pentest/jail node dist/server.js
+```
+
+### Add a custom subdirectory
+
+Add the directory name to `allowedDirectories`. `PathGuard` creates it automatically on startup:
+
+```json config/allowedPaths.json
+{
+  "allowedDirectories": [
+    "tmp", "reports", "uploads", "downloads", "wordlists",
+    "custom-scans"
+  ]
+}
+```
+
+### Allow additional file extensions
+
+Add the extension (with leading dot, lowercase) to `allowedExtensions`. Make sure the same extension does not appear in `deniedExtensions`:
+
+```json config/allowedPaths.json
+{
+  "allowedExtensions": [
+    ".txt", ".json", ".xml", ".csv", ".log", ".md",
+    ".nessus"
+  ]
+}
+```
+
+### Increase file size limits
+
+```json config/allowedPaths.json
+{
+  "maxFileSize": "500MB",
+  "maxTotalSize": "5GB"
+}
+```
+
+<Note>
+  Configuration changes take effect on the next server restart. The jail root directory and all allowed subdirectories are re-created on startup if they do not already exist.
+</Note>

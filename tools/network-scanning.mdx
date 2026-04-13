@@ -1,0 +1,218 @@
+---
+title: "Network scanning with nmap_scan and masscan_scan"
+description: "Scan hosts, ports, and services using nmap_scan and masscan_scan in RedQuanta MCP—with target formats, examples, and guidance on when to use each tool."
+keywords: ["nmap", "masscan", "port scanning", "network discovery", "MCP network tools"]
+---
+
+RedQuanta MCP provides two complementary network scanning tools that cover opposite ends of the speed-versus-depth spectrum. `nmap_scan` is the right choice when you need accurate service detection and flexible target specification. `masscan_scan` is the right choice when you need to sweep large IP ranges in seconds. Both tools validate and sanitize all arguments before execution and log every invocation to the audit trail.
+
+## nmap_scan
+
+`nmap_scan` wraps the Nmap Network Mapper, the industry standard for network reconnaissance. Nmap sends crafted packets to determine which hosts are up, which ports are open, and what services and versions are running. In dangerous mode it also performs OS fingerprinting, runs the default NSE script collection, and records traceroute paths.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="target (required)">
+    The host or range to scan. Nmap accepts a flexible target specification:
+
+    | Format | Example |
+    |--------|---------|
+    | Single IP | `192.168.1.1` |
+    | Hostname | `example.com` |
+    | IP range | `192.168.1.1-254` |
+    | CIDR network | `192.168.1.0/24` |
+    | Multiple targets | `192.168.1.1 192.168.1.2 10.0.0.1` |
+  </Accordion>
+  <Accordion title="ports (optional, default: top-1000)">
+    Controls which ports Nmap probes:
+
+    | Value | What it scans |
+    |-------|--------------|
+    | `top-1000` | The 1000 most commonly open ports (default) |
+    | `80,443,22` | Specific ports by number |
+    | `1-1000` | All ports in a range |
+    | `1-65535` | Every possible port (slow) |
+
+    Use specific port lists when you already know what services you're looking for. Use `1-65535` only during deep assessments where completeness outweighs scan time.
+  </Accordion>
+  <Accordion title="dangerous (optional, default: false)">
+    When set to `true`, Nmap adds four additional flags to the scan:
+
+    - `-O` — Operating system detection via TCP/IP fingerprinting
+    - `-sV` — Version detection for each open port
+    - `-sC` — Default NSE script collection (banner grabbing, basic vulnerability checks)
+    - `--traceroute` — Network path recording
+
+    These flags generate significantly more traffic, are more likely to trigger IDS alerts, and may cause some services to log the scan. Only enable them with explicit authorization and during phases where stealth is not a priority.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Basic web and SSH ports">
+    Scan the three most common administrative ports on a single host. This is the minimal invocation for confirming which services are accessible.
+
+    ```json
+    {
+      "name": "nmap_scan",
+      "arguments": {
+        "target": "192.168.1.1",
+        "ports": "80,443,22",
+        "dangerous": false
+      }
+    }
+    ```
+
+    Nmap sends TCP connect probes (`-sT`) to ports 22, 80, and 443 and reports each as open, closed, or filtered. Useful for quick confirmation during manual testing.
+  </Tab>
+  <Tab title="Subnet discovery">
+    Scan the top 1000 ports across an entire /24 subnet. Use this as the first step of internal network reconnaissance to build a map of live hosts and services.
+
+    ```json
+    {
+      "name": "nmap_scan",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "ports": "top-1000",
+        "dangerous": false
+      }
+    }
+    ```
+
+    Nmap performs host discovery (ARP ping on local networks) before port scanning, so unreachable hosts are skipped automatically.
+  </Tab>
+  <Tab title="Comprehensive aggressive scan">
+    Scan all 65535 ports with OS detection, version scanning, and default scripts enabled. Use this for thorough assessment of a specific host after initial reconnaissance.
+
+    ```json
+    {
+      "name": "nmap_scan",
+      "arguments": {
+        "target": "example.com",
+        "ports": "1-65535",
+        "dangerous": true
+      }
+    }
+    ```
+
+    <Warning>
+    This scan generates substantial traffic and will be detectable by any active monitoring. Only run it against targets you are explicitly authorized to test.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### Natural language prompts
+
+When working with an AI assistant connected to RedQuanta MCP, you can describe what you want in plain English:
+
+- "Scan 192.168.1.0/24 and find all hosts with port 22 open"
+- "Check what services are running on 10.0.0.5 using an aggressive scan"
+- "Do a full port scan of example.com and identify the operating system"
+- "Find all web servers on the 172.16.0.0/16 network"
+
+---
+
+## masscan_scan
+
+`masscan_scan` wraps the Masscan Internet-scale port scanner, which uses asynchronous packet transmission to scan networks far faster than Nmap. Masscan can theoretically scan the entire Internet in under five minutes. In practice, you use it to sweep large CIDR ranges quickly and identify which IPs have specific ports open before handing those targets to Nmap for deeper analysis.
+
+Masscan trades depth for speed: it tells you whether a port is open, but it does not perform service detection, version scanning, or script execution. Think of it as a wide-net filter that feeds into nmap_scan for targeted follow-up.
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="target (required)">
+    The IP range to scan. Masscan is optimized for large ranges:
+
+    | Format | Example | Notes |
+    |--------|---------|-------|
+    | CIDR notation | `192.168.1.0/24` | Best fit for masscan |
+    | Large CIDR | `10.0.0.0/8` | 16 million IPs — use carefully |
+    | Single IP | `192.168.1.1` | Works but nmap is better for single hosts |
+  </Accordion>
+  <Accordion title="ports (optional, default: 1-1000)">
+    Port range to probe at high speed. Masscan accepts the same notation as Nmap:
+
+    - `80,443` — specific ports
+    - `1-1000` — all ports in a range (default)
+    - `1-65535` — full port range (generates significant traffic)
+  </Accordion>
+  <Accordion title="rate (optional, default: 1000, range: 1–1,000,000)">
+    Transmission rate in packets per second. Higher rates finish faster but carry risk:
+
+    | Rate | Use case |
+    |------|----------|
+    | `1000` | Conservative — safe for most networks |
+    | `10000` | Moderate — suitable for internal lab networks |
+    | `100000`+ | Aggressive — can overwhelm switches and routers |
+
+    Start at `1000` and increase cautiously. Rates above `10000` can trigger security systems and degrade network performance for other users.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Fast common-services sweep">
+    Quickly identify which hosts on a subnet have the five most common service ports open. Run this when you need a rapid attack surface map.
+
+    ```json
+    {
+      "name": "masscan_scan",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "ports": "80,443,22,21,25",
+        "rate": 1000
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Large network comprehensive scan">
+    Scan the first 1000 ports across a /16 network at a moderate rate. Use this for internal red team engagements where you need fast visibility across a large segment.
+
+    ```json
+    {
+      "name": "masscan_scan",
+      "arguments": {
+        "target": "10.0.0.0/16",
+        "ports": "1-1000",
+        "rate": 10000
+      }
+    }
+    ```
+
+    <Warning>
+    A /16 scan at rate 10000 generates roughly 655 million packets. Coordinate with the network owner before running this in a production environment.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Choosing between nmap and masscan
+
+<Tabs>
+  <Tab title="Use nmap_scan when...">
+    - You're scanning a small number of specific targets (single IPs or small subnets)
+    - You need service version detection or OS fingerprinting
+    - You want NSE scripts to run against discovered services
+    - Accuracy and detail matter more than speed
+    - You're scanning hosts over the Internet where reliability matters
+  </Tab>
+  <Tab title="Use masscan_scan when...">
+    - You need to sweep a /16 or larger network quickly
+    - You're doing initial discovery to identify which IPs are worth investigating
+    - Speed matters more than service detection
+    - You plan to follow up masscan results with nmap against specific IPs
+  </Tab>
+</Tabs>
+
+<Tip>
+A common workflow is to run `masscan_scan` first against a large range to find open ports quickly, then run `nmap_scan` with `dangerous: true` against each discovered host for detailed service enumeration. The `workflow_enum` tool automates this pattern — see [Automated workflows](/tools/workflows).
+</Tip>
+
+### Natural language prompts
+
+- "Use masscan to find all hosts with port 443 open in the 10.0.0.0/8 range"
+- "Do a fast sweep of 192.168.0.0/16 at 5000 packets per second"
+- "Find all open ports on the 172.16.0.0/24 network as quickly as possible"

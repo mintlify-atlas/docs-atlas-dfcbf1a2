@@ -1,0 +1,272 @@
+---
+title: "Web testing with ffuf_fuzz and nikto_scan tools"
+description: "Discover hidden directories and web vulnerabilities using ffuf_fuzz and nikto_scan in RedQuanta MCP—FUZZ keyword examples, wordlist presets, and timeout guidance."
+keywords: ["ffuf", "nikto", "web fuzzing", "directory discovery", "web vulnerability scanning", "MCP web tools"]
+---
+
+Web application testing in RedQuanta MCP centers on two tools that cover different phases of assessment. `ffuf_fuzz` is a content discovery tool: it finds hidden paths, endpoints, and files by systematically replacing a placeholder in the URL with words from a list. `nikto_scan` is a vulnerability assessment tool: it probes a web server against a database of over 6700 known-dangerous files, outdated software signatures, and security misconfigurations. Run ffuf first to map the application's structure, then run nikto for a broad vulnerability sweep.
+
+## ffuf_fuzz
+
+`ffuf_fuzz` wraps FFUF (Fuzz Faster U Fool), a high-performance web fuzzer written in Go. FFUF's core mechanic is the `FUZZ` keyword: you place it anywhere in a URL, and FFUF replaces it with every entry in your chosen wordlist, sending one HTTP request per substitution. Responses that return a non-filtered status code indicate discovered content.
+
+### The FUZZ keyword
+
+The `FUZZ` keyword can appear in any part of the URL:
+
+| Placement | Example | Discovers |
+|-----------|---------|-----------|
+| Path segment | `https://example.com/FUZZ` | Directories and files at the root |
+| Nested path | `https://example.com/api/v1/FUZZ` | Endpoints under a known path |
+| Subdomain | `https://FUZZ.example.com` | Virtual hosts and subdomains |
+| Parameter value | `https://example.com/page?id=FUZZ` | Parameter fuzzing |
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="url (required)">
+    The target URL containing the `FUZZ` keyword. FFUF substitutes each wordlist entry at the `FUZZ` position and makes a request. The URL must include the protocol (`https://` or `http://`).
+
+    ```
+    https://example.com/FUZZ
+    https://api.example.com/v1/FUZZ
+    https://FUZZ.example.com
+    ```
+  </Accordion>
+  <Accordion title="wordlist (optional, default: common)">
+    The wordlist to iterate over. RedQuanta MCP provides seven built-in presets optimized for different discovery goals:
+
+    | Preset | Best for |
+    |--------|---------|
+    | `common` | General-purpose discovery across all content types |
+    | `directories` | Directory names, admin panels, and common folders |
+    | `files` | File names — pair with `extensions` for format-specific discovery |
+    | `api-endpoints` | REST API paths, versioned endpoints, resource names |
+    | `admin-panels` | Login pages, admin interfaces, and management consoles |
+    | `parameters` | URL parameter names for fuzzing query strings |
+    | `subdomains` | DNS subdomain names — use with `https://FUZZ.example.com` |
+  </Accordion>
+  <Accordion title="extensions (optional)">
+    A comma-separated list of file extensions to append to each wordlist entry. Use this with the `files` wordlist to discover specific file types.
+
+    ```
+    php,html,txt
+    jsp,asp,aspx
+    bak,old,backup
+    ```
+
+    For example, with `wordlist: files` and `extensions: php,bak`, FFUF probes both `config.php` and `config.bak` for every entry in the wordlist.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Directory discovery">
+    Find hidden directories and admin panels at the root of a web application. This is the most common starting point for web application reconnaissance.
+
+    ```json
+    {
+      "name": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://example.com/FUZZ",
+        "wordlist": "directories"
+      }
+    }
+    ```
+
+    FFUF filters out 404 and 403 responses by default, so results represent paths that the server acknowledges. Investigate any 200, 301, or 302 responses.
+  </Tab>
+  <Tab title="API endpoint enumeration">
+    Enumerate API endpoints under a known path. Use this after discovering that an application exposes an API to map available resources and methods.
+
+    ```json
+    {
+      "name": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://api.example.com/v1/FUZZ",
+        "wordlist": "api-endpoints"
+      }
+    }
+    ```
+
+    The `api-endpoints` wordlist includes common REST patterns: `users`, `admin`, `auth`, `login`, `token`, `v2`, and hundreds more.
+  </Tab>
+  <Tab title="File and backup discovery">
+    Search for configuration files, source code backups, and other sensitive files. Adding extensions multiplies discovery coverage for each wordlist entry.
+
+    ```json
+    {
+      "name": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://example.com/FUZZ",
+        "wordlist": "files",
+        "extensions": "php,html,txt,bak"
+      }
+    }
+    ```
+
+    This combination is particularly effective at finding files like `config.php.bak`, `db.txt`, `readme.html`, and similar artifacts that developers leave behind.
+  </Tab>
+</Tabs>
+
+### Natural language prompts
+
+- "Discover hidden directories on https://example.com"
+- "Find all API endpoints under https://api.example.com/v2/"
+- "Look for backup and configuration files on https://app.example.com"
+- "Enumerate subdomains of example.com using ffuf"
+
+---
+
+## nikto_scan
+
+`nikto_scan` wraps Nikto, a comprehensive open-source web server scanner. Nikto tests the target against a database of over 6700 potentially dangerous files and programs, checks for outdated software versions with known vulnerabilities, and identifies common misconfigurations. Unlike ffuf (which discovers new paths), nikto assesses what it finds against a known vulnerability signature database.
+
+Nikto checks for:
+- Dangerous or sensitive files present on the server (old installers, admin scripts, debug pages)
+- Server software and version banners that reveal outdated or vulnerable versions
+- Missing or misconfigured security headers
+- Dangerous HTTP methods enabled (PUT, DELETE, TRACE)
+- SSL/TLS configuration weaknesses
+- Default credentials and well-known login pages
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="target (required)">
+    The full URL of the target including protocol. Nikto needs the protocol to determine whether to use SSL and which port to target.
+
+    ```
+    https://example.com
+    http://192.168.1.100:8080
+    https://api.example.com
+    ```
+
+    <Note>
+    Always include the protocol. `example.com` without `https://` will cause Nikto to default to HTTP on port 80, which may miss HTTPS-only content.
+    </Note>
+  </Accordion>
+  <Accordion title="timeout (optional, default: 300, range: 60–3600)">
+    Maximum scan duration in seconds. Nikto's scan time depends on the application's complexity and the number of checks it runs. Guidelines:
+
+    | Timeout | When to use |
+    |---------|-------------|
+    | `60–120` | Simple static sites or quick assessments |
+    | `300` | Standard web application (default) |
+    | `600` | Complex applications with many endpoints |
+    | `3600` | Exhaustive assessment — run overnight if needed |
+
+    Nikto stops cleanly at the timeout boundary and reports whatever it found before stopping.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Standard website scan">
+    Run a standard security scan against a main website with the default 5-minute timeout. Appropriate for most assessments.
+
+    ```json
+    {
+      "name": "nikto_scan",
+      "arguments": {
+        "target": "https://example.com",
+        "timeout": 300
+      }
+    }
+    ```
+
+    Nikto will probe the server for dangerous files, check the response headers for missing security controls, and fingerprint the server software against its vulnerability database.
+  </Tab>
+  <Tab title="Extended complex application scan">
+    Allow extra time for a complex web application with many paths and dynamic content. Use when the default timeout consistently cuts the scan short.
+
+    ```json
+    {
+      "name": "nikto_scan",
+      "arguments": {
+        "target": "https://app.example.com",
+        "timeout": 600
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Non-standard port scan">
+    Scan a web application running on a non-standard port. Include the port number in the URL.
+
+    ```json
+    {
+      "name": "nikto_scan",
+      "arguments": {
+        "target": "http://192.168.1.100:8080",
+        "timeout": 300
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Interpreting nikto results
+
+Nikto structures its output into findings categorized by type. RedQuanta MCP parses these into a structured result:
+
+```json
+{
+  "success": true,
+  "data": {
+    "vulnerabilities": [
+      {
+        "description": "+ OSVDB-3092: /admin/: This might be interesting...",
+        "severity": "low",
+        "category": "Authentication"
+      },
+      {
+        "description": "+ Server: Apache/2.2.14 (Ubuntu)",
+        "severity": "medium",
+        "category": "Information Disclosure"
+      }
+    ],
+    "summary": {
+      "vulnerabilitiesFound": 12,
+      "severityCount": {
+        "high": 2,
+        "medium": 4,
+        "low": 5,
+        "info": 1
+      }
+    }
+  }
+}
+```
+
+Prioritize `high` severity findings first. `medium` findings often represent information disclosure or missing headers. `low` and `info` findings provide context for the overall security posture.
+
+### Natural language prompts
+
+- "Run a Nikto scan against https://example.com"
+- "Check https://192.168.1.50:8443 for web vulnerabilities with a 10-minute timeout"
+- "Scan https://api.example.com for outdated software and misconfigurations"
+
+---
+
+## Combining ffuf and nikto
+
+<Steps>
+  <Step title="Run ffuf to map the application">
+    Start with `ffuf_fuzz` using the `directories` wordlist to discover paths and endpoints. Note any admin panels, API endpoints, or unusual directories.
+  </Step>
+  <Step title="Investigate interesting paths">
+    For paths that return 200 responses, investigate their content. API endpoints and admin panels deserve individual attention.
+  </Step>
+  <Step title="Run nikto for vulnerability assessment">
+    Run `nikto_scan` against the base URL. Nikto will systematically check server-level vulnerabilities that ffuf's content discovery won't cover.
+  </Step>
+  <Step title="Cross-reference findings">
+    Paths discovered by ffuf that also show up in nikto findings (as known-dangerous locations) are higher priority — both tools have independently flagged them.
+  </Step>
+</Steps>
+
+<Tip>
+The `workflow_enum` tool with `scope: web` automates this combined approach. It runs ffuf and nikto in sequence and collects structured results you can hand to `workflow_scan` for deeper vulnerability assessment.
+</Tip>

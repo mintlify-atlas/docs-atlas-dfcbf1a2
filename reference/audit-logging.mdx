@@ -1,0 +1,188 @@
+---
+title: 'Audit logging and SARIF report output — RedQuanta MCP'
+description: 'JSONL audit log format, daily file location, per-event action reference, real-time monitoring commands, and SARIF 2.1.0 report structure for RedQuanta MCP.'
+keywords: ['audit log', 'JSONL', 'security logging', 'SARIF', 'tool execution', 'RedQuanta']
+---
+
+RedQuanta MCP maintains a tamper-evident audit trail of every security-relevant action the server performs. Every tool execution — from start to completion or failure — is recorded as a structured JSON object appended to a daily log file. These logs are the authoritative record for incident investigations, compliance reviews, and post-assessment reporting. Because the audit logger writes to disk before returning control to the caller, the record exists even if the process crashes mid-execution.
+
+## Log file location and rotation
+
+The audit logger writes to a file named `audit-YYYY-MM-DD.jsonl` inside the `logs/` directory at the project root. A new file is created automatically each calendar day; previous files are left in place and are not compressed or deleted by the server itself. If the `logs/` directory does not exist when the server starts, it is created. If the directory cannot be created at the expected path — for example due to a permission error — the logger falls back to a temporary directory and prints a warning to stderr.
+
+```
+logs/
+├── audit-2025-06-01.jsonl
+├── audit-2025-06-02.jsonl
+└── audit-2025-06-03.jsonl
+```
+
+<Note>
+The `logs/` directory is relative to the project root, resolved by locating the nearest `package.json` with `"name": "redquanta-mcp"` walking up from the current working directory.
+</Note>
+
+## Log format
+
+Each line in an `.jsonl` file is a self-contained, valid JSON object. JSONL (JSON Lines) means one record per line with no commas between records and no wrapping array — making the files easy to process with standard Unix tools or any JSON streaming parser.
+
+### Log entry fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | `string` | ISO 8601 timestamp at the moment the event was recorded. |
+| `level` | `"info"` \| `"warn"` \| `"error"` | Severity of the event. |
+| `action` | `string` | Machine-readable name for the event type. |
+| `outcome` | `"success"` \| `"failure"` | Whether the action completed successfully. |
+| `target` | `string` | The resource or tool the action was directed at, if applicable. |
+| `user` | `string` | Identity of the caller, if available. |
+| `details` | `object` | Arbitrary key-value pairs providing event-specific context. |
+
+### Example log entry
+
+```json
+{
+  "timestamp": "2025-06-03T14:22:07.481Z",
+  "level": "info",
+  "action": "tool_execution_completed",
+  "outcome": "success",
+  "target": "nmap_scan",
+  "details": {
+    "durationMs": 3124,
+    "exitCode": 0,
+    "argsCount": 6
+  }
+}
+```
+
+## Events that are logged
+
+The following actions appear in audit logs. Every event recorded by the server uses one of these `action` values.
+
+### Server lifecycle
+
+| Action | When it fires |
+|--------|--------------|
+| `audit_logger_initialized` | The audit logger successfully creates its log directory on startup. |
+| `audit_logger_shutdown` | The server is shutting down gracefully. |
+| `server_initialization_started` | The MCP server begins its startup sequence. |
+| `plugin_loaded` | A plugin module is registered successfully. |
+
+### Tool execution
+
+| Action | When it fires |
+|--------|--------------|
+| `tool_execution_started` | A tool call is received and about to begin. |
+| `tool_execution_completed` | A tool call finishes with exit code 0. |
+| `tool_execution_failed` | A tool call exits with a non-zero code or throws an error. |
+
+### Filesystem operations
+
+| Action | When it fires |
+|--------|--------------|
+| `filesystem_read` | A file or directory listing is read from the jail. |
+| `filesystem_write` | A file is written inside the jail (requires `dangerous: true`). |
+| `filesystem_delete` | A file is deleted inside the jail (requires `dangerous: true`). |
+
+### SARIF reporting
+
+| Action | When it fires |
+|--------|--------------|
+| `vulnerability_added` | A finding is added to the in-memory SARIF report. |
+| `sarif_report_saved` | A SARIF report is written to disk, including file size and result counts. |
+| `vulnerability_conversion_failed` | A raw tool finding could not be converted to a SARIF vulnerability. |
+| `baseline_application_failed` | A SARIF baseline comparison file could not be read or applied. |
+
+## Real-time monitoring
+
+To stream audit events as they are written, use `tail -f` against today's log file:
+
+```bash
+tail -f logs/audit-$(date +%Y-%m-%d).jsonl
+```
+
+To watch only tool failures in real time:
+
+```bash
+tail -f logs/audit-$(date +%Y-%m-%d).jsonl | grep '"outcome":"failure"'
+```
+
+To pretty-print log entries as they arrive (requires `jq`):
+
+```bash
+tail -f logs/audit-$(date +%Y-%m-%d).jsonl | jq .
+```
+
+## SARIF report output
+
+When a scan session produces vulnerability findings, the `SarifReporter` module can generate a [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) report alongside the JSONL audit log. SARIF is a JSON-based standard for static analysis results that is natively supported by GitHub Advanced Security, VS Code, and CI/CD pipelines.
+
+A SARIF report groups results by the tool that produced them. Each result carries:
+
+- A rule ID and description
+- A severity level (`error`, `warning`, `note`, or `info`)
+- A location (URI and optional line/column range)
+- A fingerprint for deduplication across report runs
+- Optional CVSS score, CWE identifier, and remediation guidance
+
+```json
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "nmap",
+          "version": "7.95",
+          "organization": "RedQuanta MCP",
+          "rules": []
+        }
+      },
+      "results": [],
+      "invocations": []
+    }
+  ]
+}
+```
+
+The `sarif_report_saved` audit event records the output file path, total result count, and counts by severity level whenever a report is written to disk.
+
+<Tip>
+To integrate SARIF output with GitHub, upload the `.sarif` file using the `github/codeql-action/upload-sarif` action. GitHub renders findings as pull request annotations and security alerts automatically.
+</Tip>
+
+## Using audit logs for incident investigation
+
+<Steps>
+  <Step title="Identify the time window">
+    Determine when the suspicious activity occurred and open the corresponding daily log file:
+
+    ```bash
+    ls -la logs/audit-*.jsonl
+    ```
+  </Step>
+  <Step title="Extract events by tool or target">
+    Filter for all events related to a specific tool name or target host:
+
+    ```bash
+    grep '"target":"nmap_scan"' logs/audit-2025-06-03.jsonl | jq .
+    ```
+  </Step>
+  <Step title="Look for failure outcomes">
+    Pull all failure events across the log to identify where the execution chain broke:
+
+    ```bash
+    grep '"outcome":"failure"' logs/audit-2025-06-03.jsonl | jq '{timestamp, action, target, details}'
+    ```
+  </Step>
+  <Step title="Reconstruct the execution sequence">
+    Sort by timestamp and review `tool_execution_started` and `tool_execution_completed` pairs to confirm which tools ran, in what order, and how long each took.
+  </Step>
+  <Step title="Cross-reference with SARIF findings">
+    If a SARIF report exists for the session, match `vulnerability_added` events in the audit log to results in the report using the `target` field.
+  </Step>
+</Steps>
+
+<Warning>
+Audit logs contain the full command arguments passed to security tools, which may include target hostnames, IP addresses, and credentials. Treat log files with the same access controls you apply to scan results.
+</Warning>

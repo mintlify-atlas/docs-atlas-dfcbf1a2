@@ -1,0 +1,171 @@
+---
+title: "RedQuanta MCP security model and controls"
+description: "How command allowlisting, filesystem jailing, argument sanitization, audit logging, and rate limiting keep every RedQuanta tool execution safe and traceable."
+keywords: ["security", "allowlist", "filesystem jail", "argument guard", "audit logging", "dangerous mode", "SARIF", "rate limiting"]
+---
+
+RedQuanta MCP is built on the assumption that the inputs coming from an LLM are untrusted. Every tool call is treated as potentially adversarial: arguments are validated against an explicit allowlist before any binary runs, all file access is confined to a single directory tree, sensitive data is scrubbed from output before it leaves the server, and every action is written to an append-only audit log. You can think of the security model as several independent gatekeepers that each have to say "yes" before anything executes.
+
+## Command allowlisting
+
+### How `allowedCommands.json` works
+
+The file `config/allowedCommands.json` is the authoritative list of every binary RedQuanta MCP may execute. Each entry declares the binary path, the minimum acceptable version, which flags are allowed, which flags require dangerous mode, and whether the tool itself requires dangerous mode:
+
+```json config/allowedCommands.json
+{
+  "allowed": {
+    "nmap": {
+      "path": "nmap",
+      "minVersion": "7.95",
+      "allowedArgs": ["-sS", "-sT", "-p", "-T4", "--host-timeout", "-oN", "--top-ports"],
+      "dangerousArgs": ["--script", "-O", "-A", "--send-eth", "--spoof-mac"],
+      "requiresDangerous": false
+    },
+    "ffuf": {
+      "path": "ffuf",
+      "minVersion": "2.0",
+      "allowedArgs": ["-w", "-u", "-t", "-H", "-X", "-o", "-of", "-mc"],
+      "dangerousArgs": ["-replay-proxy", "-input-cmd", "-request"],
+      "requiresDangerous": false
+    }
+  }
+}
+```
+
+Any binary not listed in `allowed` is rejected outright. Commands in the `denied.commands` list (such as `bash`, `python`, `ssh`, `curl`, and `nc`) are never executable regardless of context.
+
+### How ArgGuard validates arguments
+
+`ArgGuard` (defined in `src/utils/argGuard.ts`) runs four checks on every argument before the binary executes:
+
+<Steps>
+  <Step title="Command injection check">
+    The argument is tested against every pattern in `deniedPatterns.json`'s `commandInjection` list. Patterns include `$()`, backtick subshells, `||`, `&&`, semicolons followed by a word, pipe characters, redirects, null bytes, and `eval()` / `exec()` / `system()` calls. A match throws immediately.
+  </Step>
+  <Step title="Path traversal check">
+    Every variation of `../` is matched: raw `../`, URL-encoded `%2e%2e%2f`, double-encoded `%252e%252e%252f`, and Windows-style `..\`. A match throws immediately.
+  </Step>
+  <Step title="Shell metacharacter check">
+    Variables (`$VAR`, `${VAR}`, `%VAR%`), glob wildcards (`*`, `?`, `[...]`), tilde expansion, and `#` are all detected and rejected.
+  </Step>
+  <Step title="Per-command flag allowlist">
+    For every argument that starts with `-`, the flag is compared against the `allowedArgs` list for that specific command. If the flag is in `dangerousArgs`, dangerous mode must be enabled. If the flag is in neither list, the call is rejected.
+  </Step>
+</Steps>
+
+<Warning>
+Argument validation is applied to every flag. Non-flag values (targets, file paths, wordlist names) are still checked for injection and traversal patterns but are not required to be in the allowlist.
+</Warning>
+
+## Filesystem jail
+
+### How `JAIL_ROOT` works
+
+`PathGuard` (defined in `src/utils/pathGuard.ts`) resolves every file path to its canonical form with `resolve()` and then checks whether the result starts with `JAIL_ROOT`. If the relative path from jail root begins with `..` or is absolute, the path is rejected with the reason `"Path escapes jail root"`.
+
+The default jail root is `/tmp/redquanta`. You can override it with the `JAIL_ROOT` environment variable. At startup, `PathGuard` creates four standard subdirectories automatically: `tmp`, `reports`, `uploads`, and `downloads`.
+
+```bash
+JAIL_ROOT=/opt/redquanta/vol   # override the default jail location
+```
+
+### Path traversal prevention
+
+`PathGuard.containsPathTraversal()` tests the raw input string for seven traversal patterns before it is even resolved:
+
+```
+../          %2e%2e%2f    %252e%252e%252f
+..\          %2e%2e%5c    /../../
+\\..\\
+```
+
+This defense-in-depth catches traversal attempts even if `resolve()` would have normalized them away.
+
+### File extension and size controls
+
+PathGuard also enforces:
+
+- **Allowed extensions**: `.txt`, `.json`, `.xml`, `.csv`, `.log`, `.md`
+- **Denied extensions**: `.exe`, `.dll`, `.sys`, `.msi`, `.bat`, `.cmd`
+- **Maximum file size**: 100 MB per file
+- **Maximum total size**: 1 GB across the entire jail
+
+## Dangerous mode
+
+Standard mode is read-only. When you set `DANGEROUS_MODE=true`, the server unlocks:
+
+- **Write operations** — tools may write files inside the jail
+- **Delete operations** — tools may remove files inside the jail
+- **Advanced scanning flags** — nmap's `-O`, `-A`, `--send-eth`, and `--spoof-mac`; ffuf's `-replay-proxy` and `-input-cmd`; masscan's `--banners`
+- **Exploitation tools** — plugin system will load plugins with `dangerLevel: "dangerous"`
+
+<Warning>
+Dangerous mode must be explicitly opted in to with `DANGEROUS_MODE=true`. It should only be enabled in isolated lab environments where you have explicit written authorization for all targets. Audit logging remains active in dangerous mode — every action is still recorded.
+</Warning>
+
+## Audit logging
+
+Every tool execution is logged to a daily JSONL file. The `AuditLogger` (defined in `src/utils/auditLogger.ts`) appends one JSON object per line to `logs/audit-YYYY-MM-DD.jsonl`.
+
+Each event contains:
+
+```json logs/audit-2025-01-15.jsonl
+{"timestamp":"2025-01-15T14:32:01.234Z","level":"info","action":"tool_execution_started","outcome":"success","details":{"tool":"nmap_scan","executionId":"a3f2b1c0-...","args":{"target":"192.168.1.1","ports":"top-1000"}}}
+{"timestamp":"2025-01-15T14:32:08.891Z","level":"info","action":"tool_execution_completed","outcome":"success","details":{"tool":"nmap_scan","executionId":"a3f2b1c0-..."}}
+```
+
+The following `action` values are written across the server lifecycle:
+
+| Action | When it fires |
+|---|---|
+| `audit_logger_initialized` | Server startup |
+| `server_initialization_started` | Before MCP handlers register |
+| `server_startup_completed` | After all transports are listening |
+| `tool_execution_started` | Before ArgGuard runs |
+| `tool_execution_completed` | After the binary exits successfully |
+| `tool_execution_failed` | If the binary or ArgGuard throws |
+| `server_shutdown_initiated` | On `SIGINT` |
+
+<Note>
+If the `logs/` directory cannot be created, the audit logger falls back to the system temp directory automatically. You can monitor audit events in real time with `tail -f logs/audit-$(date +%Y-%m-%d).jsonl`.
+</Note>
+
+## Rate limiting
+
+The REST API server registers `@fastify/rate-limit` with a limit of **100 requests per minute** per IP address:
+
+```typescript src/server.ts
+await this.app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+```
+
+Requests that exceed the limit receive a `429 Too Many Requests` response. Rate limiting applies to all REST endpoints, including `/health` and `/docs`. Stdio mode clients (AI assistants) are not subject to rate limiting because the MCP protocol provides its own backpressure through the JSON-RPC request/response cycle.
+
+## Denied commands and patterns
+
+Beyond the per-command flag validation, `allowedCommands.json` carries a `denied` block that lists patterns and whole commands that are always blocked:
+
+```json config/allowedCommands.json (excerpt)
+"denied": {
+  "patterns": ["rm\\s+-rf", "dd\\s+if=", "mkfs\\.", "shutdown", "reboot"],
+  "commands": [
+    "rm", "dd", "bash", "sh", "python", "perl", "ssh", "curl", "nc", "netcat", "socat"
+  ]
+}
+```
+
+This blocked list prevents shell escape via interpreter injection (`python -c "import os; os.system(...)"`) and network pivoting via `nc` or `socat`.
+
+Separately, `deniedPatterns.json` covers sensitive data categories that are redacted from output by `ArgGuard.scrubSensitiveData()`:
+
+- Credential fields: `password`, `passwd`, `secret`, `key`, `token`, `auth`, `jwt`, `bearer`
+- Session identifiers: `session_id`, `session_token`, `x-api-key`, `x-auth-token`
+- Private-range IP addresses (IPv4 and IPv6)
+
+## SARIF report output
+
+RedQuanta MCP includes a `SarifReporter` utility (defined in `src/utils/sarifReporter.ts`) that formats scan results as [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) documents. SARIF output lets you import findings directly into GitHub Advanced Security, Azure DevOps, and any other tool that consumes the standard.
+
+<Tip>
+Generate a SARIF report from a workflow scan result and upload it to GitHub with `gh code-scanning upload-results --sarif <file>` to surface findings natively in your pull request security tab.
+</Tip>

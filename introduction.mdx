@@ -1,0 +1,64 @@
+---
+title: "RedQuanta MCP: penetration testing for AI agents"
+description: "RedQuanta MCP connects AI assistants to professional security tools via MCP, enabling natural-language penetration testing with enterprise-grade safety controls."
+keywords: ["redquanta", "mcp", "penetration testing", "model context protocol", "security", "nmap", "claude desktop"]
+---
+
+RedQuanta MCP is an enterprise-grade penetration testing orchestration platform built on the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). It gives AI assistants — Claude Desktop, Cursor, or any MCP-compatible client — direct, controlled access to professional security tools: Nmap, Masscan, FFUF, Nikto, Gobuster, Hydra, and more. Instead of switching between terminals and AI chat windows, you describe what you need in plain language and RedQuanta executes the right tools, returns structured results, and suggests next steps.
+
+## Server modes
+
+RedQuanta runs in three modes so you can fit it into any workflow.
+
+| Mode | Transport | Best for |
+|------|-----------|----------|
+| `stdio` | JSON-RPC over standard I/O | Claude Desktop, Cursor, and other MCP-native clients |
+| `rest` | HTTP/JSON on port 5891 | Web applications, CI/CD pipelines, API integrations |
+| `hybrid` | Both simultaneously | Maximum flexibility — one server, two protocols |
+
+Set your mode with the `MCP_MODE` environment variable or the `--mode` CLI flag.
+
+## Key capabilities
+
+**Security tools** — RedQuanta wraps industry-standard tools in a safe execution layer. Each tool call is validated against a command allowlist, arguments are sanitized, and all output is returned as structured JSON.
+
+**Automated workflows** — The built-in workflow engine chains multiple tools together. `workflow_enum` runs a full network enumeration sequence with host discovery, port scanning, and service detection. `workflow_scan` performs a comprehensive vulnerability assessment with auto-detected service scanning across HTTP, database, and other services.
+
+**Plugin system** — You can extend RedQuanta with custom tools by dropping a plugin into the plugin directory. Plugins follow the same security model as built-in tools and are automatically discovered on startup.
+
+**Web intelligence** — The `ddg_search` tool provides OSINT and threat intelligence gathering via web search without requiring external API keys.
+
+## Security model
+
+RedQuanta is designed for use in authorized security testing environments. Several layers of control prevent accidental or malicious misuse.
+
+- **Jail root (`JAIL_ROOT`)** — All filesystem operations are confined to a single directory. Paths outside the jail are rejected before any command runs.
+- **Command allowlists** — `config/allowedCommands.json` defines exactly which binaries and flags are permitted. Anything not on the list is blocked at the argument-guard layer.
+- **Argument sanitization** — Every argument is validated and stripped of shell metacharacters before execution.
+- **Audit logging** — Every tool invocation is written to `logs/audit-YYYY-MM-DD.jsonl` with timestamp, tool name, arguments, and outcome.
+- **Dangerous mode** — Destructive operations (file writes, SQL injection testing, password cracking) are disabled by default. You must explicitly set `DANGEROUS_MODE=true` to unlock them, and you should only do so in environments where you have written authorization.
+
+<Warning>
+RedQuanta MCP is for authorized security assessments only. Always confirm you have explicit written permission before scanning or testing any system you do not own.
+</Warning>
+
+## Who it's for
+
+RedQuanta is built for two audiences. **Security teams** use it to accelerate reconnaissance, vulnerability scanning, and report generation — the AI client orchestrates multi-tool workflows and surfaces actionable findings. **LLM integration builders** use it as a production-ready MCP server that brings real security capabilities to AI applications without building tool wrappers from scratch.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, build it, and run your first scan in under ten minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the MCP server, workflow engine, and security layers fit together.
+  </Card>
+  <Card title="Security tools" icon="shield" href="/tools/overview">
+    Browse every tool RedQuanta exposes, with arguments and example prompts.
+  </Card>
+  <Card title="Claude Desktop integration" icon="robot" href="/integrations/claude-desktop">
+    Configure Claude Desktop to use RedQuanta as its security testing backend.
+  </Card>
+</CardGroup>

@@ -1,0 +1,104 @@
+---
+title: "nikto_scan — Web Server Vulnerability Assessment"
+description: "Parameter reference for nikto_scan: target URL format, timeout configuration, what Nikto checks, and how to interpret results for web security assessments."
+keywords: ["nikto", "web vulnerability scanner", "web server audit", "MCP tool", "security assessment"]
+---
+
+The `nikto_scan` tool runs Nikto, an open-source web server scanner that performs comprehensive automated testing against a target web application. Nikto checks for over 6,700 potentially dangerous files and programs, tests for outdated software versions across both web servers and application frameworks, and identifies server-specific configuration problems including default credentials, directory listing, and dangerous HTTP methods. It is particularly effective at surfacing misconfigurations and known-vulnerable software that automated CI pipelines and manual code review often miss. Because Nikto issues a large volume of HTTP requests, it is intentionally noisy—treat it as an audit tool rather than a stealth reconnaissance technique.
+
+<Warning>
+Nikto generates significant traffic against the target. Do not run it against production systems without explicit authorization, a defined testing window, and awareness of the load it places on the server.
+</Warning>
+
+## Parameters
+
+<ParamField path="target" type="string" required>
+  Target URL to scan, including the protocol. Non-standard ports must be specified explicitly. Nikto tests the web server and application at this address. Examples: `"https://example.com"`, `"http://192.168.1.100:8080"`, `"https://api.example.com"`.
+</ParamField>
+
+<ParamField path="timeout" type="number" default="300">
+  Maximum scan time in seconds. Nikto stops after this duration regardless of how many checks remain. Minimum: `60`, maximum: `3600`. Larger or complex applications may require a higher value to complete all checks.
+</ParamField>
+
+## What Nikto checks
+
+Nikto tests a target across several categories of security issues:
+
+- **Dangerous files and programs** — over 6,700 known-bad paths such as old CGI scripts, shell interpreters, and sensitive backup files
+- **Outdated software** — server banners and response headers compared against a database of vulnerable versions for Apache, nginx, IIS, PHP, and common frameworks
+- **Configuration issues** — directory listing, dangerous HTTP methods (`PUT`, `DELETE`, `TRACE`), missing security headers, and overly verbose error messages
+- **Default credentials** — well-known username/password combinations for common web applications and management interfaces
+- **SSL/TLS weaknesses** — certificate validity, weak ciphers, and protocol downgrade issues (for HTTPS targets)
+
+## Examples
+
+<Tabs>
+  <Tab title="Standard website scan">
+    Audit a public-facing website with the default five-minute timeout.
+
+    ```json
+    {
+      "tool": "nikto_scan",
+      "arguments": {
+        "target": "https://example.com",
+        "timeout": 300
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Extended scan of complex application">
+    Increase the timeout to allow Nikto to work through a large or slow-responding web application.
+
+    ```json
+    {
+      "tool": "nikto_scan",
+      "arguments": {
+        "target": "https://app.example.com",
+        "timeout": 600
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Run `ffuf_fuzz` first to map the application's URL structure, then use `nikto_scan` on the base URL to check for server-level and configuration issues. The two tools cover complementary ground.
+</Tip>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the scan completed without error.
+</ResponseField>
+
+<ResponseField name="tool" type="string" required>
+  Always `"nikto"`.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The URL that was scanned.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="command" type="string">
+  The full command string executed.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Raw Nikto output. Each finding is reported on a separate line with a description and the affected URL or header.
+</ResponseField>
+
+<ResponseField name="stderr" type="string">
+  Any warnings or informational messages from Nikto.
+</ResponseField>
+
+<ResponseField name="exitCode" type="number">
+  Process exit code. `0` indicates the scan completed (findings do not affect the exit code).
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

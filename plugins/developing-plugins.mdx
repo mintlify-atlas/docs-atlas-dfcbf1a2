@@ -1,0 +1,499 @@
+---
+title: "Developing plugins for RedQuanta MCP"
+description: "Build custom security tools that integrate natively with RedQuanta. Covers ToolWrapper, plugin.json manifest fields, single-file plugins, and testing."
+keywords: ["develop plugin", "ToolWrapper", "custom tool", "plugin.json", "RedQuanta extension"]
+---
+
+Every plugin is a JavaScript or TypeScript module that exports a class extending `ToolWrapper`. The plugin system imports that class at runtime, instantiates it, and registers it under the name declared in the manifest. From that point on, your plugin behaves exactly like any built-in tool — it appears in `plugin_system` list output, responds to `execute` calls, and surfaces its schema and examples through `info`.
+
+## The `ToolWrapper` base class
+
+All plugins must extend `ToolWrapper`, defined in `src/tools/base.ts`. The constructor accepts a `name` string that identifies the plugin at runtime. The only method you are required to implement is `execute`.
+
+```typescript
+export abstract class ToolWrapper {
+  protected name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  public getName(): string {
+    return this.name;
+  }
+
+  public abstract execute(options: Record<string, any>): Promise<ToolResult>;
+}
+```
+
+The `execute` method receives the `pluginArgs` object passed by the caller and must return a `ToolResult`:
+
+```typescript
+export interface ToolResult {
+  success: boolean;
+  tool?: string;
+  version?: string;
+  target?: string;
+  duration?: number;
+  exitCode?: number;
+  command?: string;
+  data?: any;
+  error?: string;
+  stdout?: string;
+  stderr?: string;
+  outputFiles?: string[];
+  parsedData?: any;
+  metadata?: Record<string, any>;
+}
+```
+
+Set `success: true` for clean execution and `success: false` for errors. Always include `tool` and, where applicable, `target` — the MCP layer surfaces these fields to the calling LLM.
+
+## Plugin directory structure
+
+A directory-based plugin lives in its own folder under `plugins/` and contains at minimum a manifest and an entry point:
+
+```
+plugins/
+└── my-tool/
+    ├── plugin.json
+    └── index.js
+```
+
+The `entryPoint` field in `plugin.json` is resolved relative to the plugin directory, so `"entryPoint": "index.js"` maps to `plugins/my-tool/index.js`.
+
+## Creating a plugin
+
+<Steps>
+  <Step title="Create the plugin directory">
+    Create a new folder inside the `plugins/` directory. The folder name does not have to match the plugin name, but keeping them consistent makes discovery easier.
+
+    ```bash
+    mkdir plugins/my-tool
+    ```
+  </Step>
+
+  <Step title="Write the plugin.json manifest">
+    Create `plugins/my-tool/plugin.json`. Every field listed here is recognized by the `PluginManifest` interface — the system validates `name`, `version`, `description`, `category`, and `entryPoint` before loading.
+
+    ```json plugin.json
+    {
+      "name": "my-tool",
+      "version": "1.0.0",
+      "description": "Custom host reachability checker",
+      "author": "Your Name",
+      "category": "network",
+      "dangerLevel": "safe",
+      "entryPoint": "index.js",
+      "dependencies": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Hostname or IP address to check"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout in milliseconds",
+            "default": 5000
+          }
+        },
+        "required": ["target"]
+      },
+      "examples": [
+        {
+          "title": "Check a single host",
+          "description": "Test whether a host responds to ping",
+          "command": "my-tool",
+          "parameters": { "target": "192.168.1.1" },
+          "expectedOutput": "Host reachability status and round-trip time"
+        }
+      ],
+      "documentation": "Checks whether a host is reachable using ICMP ping.",
+      "customCommands": [
+        {
+          "name": "sweep",
+          "description": "Check reachability of all hosts in a CIDR range",
+          "parameters": [
+            {
+              "name": "cidr",
+              "type": "string",
+              "description": "CIDR range to sweep",
+              "required": true
+            }
+          ],
+          "examples": ["Sweep 192.168.1.0/24 for live hosts"]
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Implement the plugin class">
+    Create `plugins/my-tool/index.js`. Export your class as the default export. The plugin system looks for `module.default`, then `module[pluginName]`, then `module[pluginName + 'Tool']`.
+
+    ```javascript index.js
+    import { ToolWrapper } from '../../src/tools/base.js';
+    import { exec } from 'child_process';
+    import { promisify } from 'util';
+
+    const execAsync = promisify(exec);
+
+    export default class MyTool extends ToolWrapper {
+      constructor() {
+        super('my-tool');
+      }
+
+      async execute(options) {
+        const { target, timeout = 5000 } = options;
+
+        if (!target) {
+          return {
+            success: false,
+            tool: 'my-tool',
+            error: 'target is required'
+          };
+        }
+
+        const start = Date.now();
+
+        try {
+          const { stdout } = await execAsync(
+            `ping -c 1 -W ${Math.ceil(timeout / 1000)} ${target}`
+          );
+
+          return {
+            success: true,
+            tool: 'my-tool',
+            target,
+            duration: Date.now() - start,
+            data: { reachable: true, rawOutput: stdout },
+            metadata: { pluginVersion: '1.0.0' }
+          };
+        } catch (error) {
+          return {
+            success: false,
+            tool: 'my-tool',
+            target,
+            duration: Date.now() - start,
+            data: { reachable: false },
+            error: error.message
+          };
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Verify the plugin loads">
+    Restart the server (or use the `load` action) and confirm the plugin is registered:
+
+    ```json
+    { "action": "list" }
+    ```
+
+    Then inspect it:
+
+    ```json
+    { "action": "info", "pluginName": "my-tool" }
+    ```
+  </Step>
+</Steps>
+
+## Manifest field reference
+
+<AccordionGroup>
+  <Accordion title="Required fields">
+    <ParamField body="name" type="string" required>
+      Unique identifier for the plugin. Used as the key in the plugin registry and as the target for `pluginName` in tool calls. Must be unique across all loaded plugins.
+    </ParamField>
+
+    <ParamField body="version" type="string" required>
+      Semantic version string (e.g., `"1.0.0"`). Surfaced in `info` output and audit logs.
+    </ParamField>
+
+    <ParamField body="description" type="string" required>
+      Human-readable description of what the plugin does. Used in LLM guidance generation by `generateUsageExamples`.
+    </ParamField>
+
+    <ParamField body="category" type="string" required>
+      Plugin category. Must be one of: `network`, `web`, `exploitation`, `password`, `forensics`, `automation`, `custom`.
+    </ParamField>
+
+    <ParamField body="entryPoint" type="string" required>
+      Path to the plugin's main module, relative to the `plugin.json` directory. Typically `"index.js"` or `"index.ts"`.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Optional fields">
+    <ParamField body="author" type="string">
+      Plugin author name or contact. Included in `info` output.
+    </ParamField>
+
+    <ParamField body="dangerLevel" type="string" default="caution">
+      Risk classification. One of: `safe`, `caution`, `dangerous`. Plugins with `dangerous` are skipped unless the server starts with `--dangerous`.
+    </ParamField>
+
+    <ParamField body="dependencies" type="string[]">
+      Array of system binary or package names the plugin requires (e.g., `["openssl", "nmap"]`). Not automatically installed — used for documentation and LLM guidance.
+    </ParamField>
+
+    <ParamField body="documentation" type="string">
+      Extended documentation string surfaced by `getPluginHelp`. Use this for longer usage notes that don't fit in `description`.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Schema">
+    <ParamField body="schema" type="object">
+      JSON Schema object describing the `execute` method's `options` parameter. The system surfaces this to LLMs via `info` so they can construct valid `pluginArgs`. Use standard JSON Schema properties: `type`, `properties`, `required`, `enum`, `default`.
+
+      ```json
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Target hostname" },
+          "port": { "type": "number", "default": 443 }
+        },
+        "required": ["target"]
+      }
+      ```
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Examples">
+    <ParamField body="examples" type="PluginExample[]">
+      Array of `PluginExample` objects shown in `info` output and used for LLM guidance. Each example has:
+
+      - `title` (string) — short label
+      - `description` (string) — what this example demonstrates
+      - `command` (string) — the plugin name (matches `name`)
+      - `parameters` (object) — concrete `pluginArgs` values
+      - `expectedOutput` (string, optional) — description of expected result
+
+      ```json
+      "examples": [
+        {
+          "title": "Basic scan",
+          "description": "Scan a single host on the default port",
+          "command": "my-tool",
+          "parameters": { "target": "10.0.0.1" },
+          "expectedOutput": "Open ports and service banners"
+        }
+      ]
+      ```
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Custom commands">
+    <ParamField body="customCommands" type="CustomCommand[]">
+      Array of `CustomCommand` objects that describe higher-level operations your plugin supports. Each command has:
+
+      - `name` (string) — command identifier
+      - `description` (string) — what the command does
+      - `parameters` (CustomParameter[]) — parameter definitions, each with `name`, `type`, `description`, and optional `required`, `default`, `enum`, `pattern`
+      - `examples` (string[]) — plain-text usage examples
+
+      Custom commands are surfaced through `getSystemInfo` and `getAllCustomCommands`, making them discoverable by LLMs without executing the plugin.
+
+      ```json
+      "customCommands": [
+        {
+          "name": "sweep",
+          "description": "Check all hosts in a CIDR range",
+          "parameters": [
+            {
+              "name": "cidr",
+              "type": "string",
+              "description": "CIDR range to sweep",
+              "required": true
+            }
+          ],
+          "examples": ["Sweep 10.0.0.0/24 for live hosts"]
+        }
+      ]
+      ```
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+## Single-file plugins
+
+For simple utilities, you can skip the directory structure and drop a single `.js` or `.ts` file directly into `plugins/`. The system detects standalone files and attempts to load them without a manifest.
+
+You can embed a `PluginManifest`-compatible JSON object inside a JSDoc `@plugin` comment. The loader extracts and parses it at load time:
+
+```javascript
+/**
+ * @plugin {
+ *   "name": "ssl_analyzer",
+ *   "version": "1.0.0",
+ *   "description": "Advanced SSL/TLS certificate and configuration analyzer",
+ *   "category": "web",
+ *   "dangerLevel": "safe",
+ *   "author": "RedQuanta Team",
+ *   "customCommands": [
+ *     {
+ *       "name": "comprehensive_ssl_check",
+ *       "description": "Complete SSL/TLS security assessment",
+ *       "parameters": ["--check-vulnerabilities", "--analyze-ciphers"],
+ *       "examples": ["Check for SSL vulnerabilities and weak ciphers"]
+ *     }
+ *   ]
+ * }
+ */
+
+import { ToolWrapper } from '../src/tools/base.js';
+
+export default class SSLAnalyzerTool extends ToolWrapper {
+  constructor() {
+    super('ssl_analyzer');
+  }
+
+  async execute(options) {
+    // implementation
+  }
+}
+```
+
+<Note>
+If no `@plugin` comment is present, the loader assigns a default manifest: `name` derived from the filename, `version: "1.0.0"`, `category: "custom"`, and `dangerLevel: "caution"`.
+</Note>
+
+## Complete plugin + manifest side by side
+
+<CodeGroup>
+
+```json plugin.json
+{
+  "name": "my-tool",
+  "version": "1.0.0",
+  "description": "Custom host reachability checker",
+  "author": "Your Name",
+  "category": "network",
+  "dangerLevel": "safe",
+  "entryPoint": "index.js",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Hostname or IP address to check"
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Timeout in milliseconds",
+        "default": 5000
+      }
+    },
+    "required": ["target"]
+  },
+  "examples": [
+    {
+      "title": "Check a single host",
+      "description": "Test whether a host responds to ping",
+      "command": "my-tool",
+      "parameters": { "target": "192.168.1.1" },
+      "expectedOutput": "Host reachability status and round-trip time"
+    }
+  ]
+}
+```
+
+```javascript index.js
+import { ToolWrapper } from '../../src/tools/base.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+export default class MyTool extends ToolWrapper {
+  constructor() {
+    super('my-tool');
+  }
+
+  async execute(options) {
+    const { target, timeout = 5000 } = options;
+
+    if (!target) {
+      return {
+        success: false,
+        tool: 'my-tool',
+        error: 'target is required'
+      };
+    }
+
+    const start = Date.now();
+
+    try {
+      const { stdout } = await execAsync(
+        `ping -c 1 -W ${Math.ceil(timeout / 1000)} ${target}`
+      );
+
+      return {
+        success: true,
+        tool: 'my-tool',
+        target,
+        duration: Date.now() - start,
+        data: { reachable: true, rawOutput: stdout },
+        metadata: { pluginVersion: '1.0.0' }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        tool: 'my-tool',
+        target,
+        duration: Date.now() - start,
+        data: { reachable: false },
+        error: error.message
+      };
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## Testing your plugin
+
+Once you've placed the plugin directory under `plugins/`, the server auto-discovers it on the next startup. You can also load it at runtime without restarting.
+
+**Check it was discovered:**
+
+```json
+{ "action": "list" }
+```
+
+**Inspect the manifest and schema:**
+
+```json
+{ "action": "info", "pluginName": "my-tool" }
+```
+
+**Run it:**
+
+```json
+{
+  "action": "execute",
+  "pluginName": "my-tool",
+  "pluginArgs": { "target": "127.0.0.1" }
+}
+```
+
+<Tip>
+Use `info` before `execute` to confirm the plugin loaded with the correct schema. If `execute` returns an error about a missing class, verify that your module has a default export that is a class extending `ToolWrapper`.
+</Tip>
+
+<Warning>
+If your plugin has `dangerLevel: "dangerous"` and the server was not started with `--dangerous`, it will not appear in `list` output. The server logs a warning for each skipped plugin at startup.
+</Warning>
+
+## LLM guidance fields
+
+The `PluginSystem` uses `description`, `examples`, and `customCommands` to generate guidance for LLMs via `generateUsageExamples`. Populating these fields thoroughly means the LLM can discover and invoke your plugin correctly without additional instructions.
+
+- **`description`** — used to generate a `basicUsage` sentence: `"Use tool '<name>' for <description>"`
+- **`schema.properties`** — surfaced directly as the `parameters` map in `getSystemInfo`
+- **`customCommands`** — aggregated into the global `availableCommands` list returned by `getSystemInfo`
+
+Write `description` as a plain imperative sentence and keep `examples` concrete. Avoid vague language like "performs analysis" in favor of specific output descriptions like "returns open ports, service versions, and OS fingerprints."

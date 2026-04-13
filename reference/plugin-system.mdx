@@ -1,0 +1,118 @@
+---
+title: "plugin_system — Dynamic Plugin Management and Execution"
+description: "Parameter reference for plugin_system: list, load, unload, execute, and info actions for managing custom security tools and scripts in the RedQuanta platform."
+keywords: ["plugin_system", "plugin management", "custom tools", "MCP tool", "extensibility"]
+---
+
+The `plugin_system` tool provides a runtime interface for managing the RedQuanta plugin registry, which allows custom security tools, scripts, and third-party utilities to be integrated into the platform without restarting the server. Plugins are loaded dynamically and can be hot-swapped during an active session, making it practical to add specialized tools mid-engagement. Each plugin exposes its own execution arguments through the `pluginArgs` parameter, so the interface adapts to whatever the plugin requires. The `list` action gives you a current inventory of available plugins, while `info` returns the metadata and expected arguments for a specific plugin before you execute it.
+
+## Parameters
+
+<ParamField path="action" type="string" required>
+  Plugin management action to perform.
+
+  | Value | Description |
+  |---|---|
+  | `list` | Show all currently available and loaded plugins |
+  | `load` | Register a plugin in the system |
+  | `unload` | Remove a plugin from the registry |
+  | `execute` | Run a loaded plugin |
+  | `info` | Retrieve metadata and argument schema for a plugin |
+</ParamField>
+
+<ParamField path="pluginName" type="string">
+  Name of the plugin for actions that target a specific plugin (`load`, `unload`, `execute`, `info`). Not required for `list`. Must match the name the plugin was registered under.
+</ParamField>
+
+<ParamField path="pluginArgs" type="object">
+  Arguments to pass to the plugin during execution. The structure is plugin-specific and varies based on the plugin's functionality. Consult the plugin's `info` output for the expected argument schema before calling `execute`.
+</ParamField>
+
+## Examples
+
+<Tabs>
+  <Tab title="List plugins">
+    Retrieve the current inventory of available plugins.
+
+    ```json
+    {
+      "tool": "plugin_system",
+      "arguments": {
+        "action": "list"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Get plugin info">
+    Inspect the metadata and expected arguments for a plugin before executing it.
+
+    ```json
+    {
+      "tool": "plugin_system",
+      "arguments": {
+        "action": "info",
+        "pluginName": "custom-scanner"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Execute a plugin">
+    Run a loaded plugin against a target, passing plugin-specific arguments.
+
+    ```json
+    {
+      "tool": "plugin_system",
+      "arguments": {
+        "action": "execute",
+        "pluginName": "custom-scanner",
+        "pluginArgs": {
+          "target": "192.168.1.1"
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Load a plugin">
+    Register a new plugin in the system by name so it becomes available for execution.
+
+    ```json
+    {
+      "tool": "plugin_system",
+      "arguments": {
+        "action": "load",
+        "pluginName": "custom-scanner"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Run `info` before `execute` to confirm the expected `pluginArgs` schema. Passing unexpected or missing arguments may cause the plugin to fail silently.
+</Tip>
+
+<Note>
+For guidance on writing your own plugins, see the [Developing Plugins](/plugins/developing-plugins) guide.
+</Note>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the action completed without error.
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  The action that was performed.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Action output. For `list`, this is a formatted list of available plugins. For `info`, this is the plugin's metadata including name, version, description, and argument schema. For `execute`, this is the plugin's own output.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message, including "plugin not found" if the specified `pluginName` is not registered.
+</ResponseField>

@@ -1,0 +1,111 @@
+---
+title: "workflow_enum — Automated Reconnaissance Workflow"
+description: "Reference for workflow_enum: scope, depth, coaching parameters, and how the workflow sequences nmap, masscan, ffuf, and nikto for target enumeration."
+keywords: ["workflow_enum", "enumeration workflow", "reconnaissance automation", "MCP tool", "penetration testing methodology"]
+---
+
+The `workflow_enum` tool runs a multi-tool reconnaissance workflow that adapts its methodology to your target type, desired coverage, and experience level. Rather than invoking individual scanning tools in sequence yourself, `workflow_enum` orchestrates host discovery, port scanning, service enumeration, and vulnerability identification as a coherent pipeline following industry-standard penetration testing methodology. The workflow reads the `target` parameter to determine whether it is dealing with an individual host, a domain, or a network range, then selects and sequences the appropriate tools based on `scope` and `depth`. Coaching output is woven throughout to explain findings and suggest next steps at a level matched to the operator's experience.
+
+## Parameters
+
+<ParamField path="target" type="string" required>
+  Primary target for comprehensive enumeration. Accepts a single host, domain name, or network range. The workflow adapts its tool selection and ordering based on the target type. Examples: `"192.168.1.1"`, `"example.com"`, `"192.168.1.0/24"`.
+</ParamField>
+
+<ParamField path="scope" type="string" default="network">
+  Enumeration scope that determines focus area and tool selection.
+
+  | Value | Focus |
+  |---|---|
+  | `network` | Network services and infrastructure — port scanning, service identification, firewall mapping |
+  | `web` | Web application testing — directory discovery, endpoint enumeration, web server analysis |
+  | `full` | Combines both scopes for a comprehensive assessment of all attack surface |
+</ParamField>
+
+<ParamField path="depth" type="string" default="normal">
+  Scan intensity and comprehensiveness.
+
+  | Value | Description |
+  |---|---|
+  | `light` | Basic discovery only — fast, minimal footprint, suitable for quick host inventory |
+  | `normal` | Standard enumeration techniques — balanced speed and coverage for most assessments |
+  | `deep` | Exhaustive reconnaissance with advanced techniques — thorough but time-intensive |
+</ParamField>
+
+<ParamField path="coaching" type="string" default="beginner">
+  Level of guidance provided throughout workflow execution.
+
+  | Value | Output style |
+  |---|---|
+  | `beginner` | Detailed explanations of each step, what findings mean, and safety reminders |
+  | `advanced` | Concise technical output without explanatory text — suited for experienced testers |
+</ParamField>
+
+## Examples
+
+<Tabs>
+  <Tab title="Internal network recon with guidance">
+    Enumerate an internal subnet at normal depth with beginner coaching. Suitable for junior testers or when building a documented evidence trail with explanations for non-technical stakeholders.
+
+    ```json
+    {
+      "tool": "workflow_enum",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "scope": "network",
+        "depth": "normal",
+        "coaching": "beginner"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Deep web application assessment">
+    Run exhaustive web-focused enumeration on a domain with advanced coaching for an experienced tester who wants dense technical output.
+
+    ```json
+    {
+      "tool": "workflow_enum",
+      "arguments": {
+        "target": "example.com",
+        "scope": "web",
+        "depth": "deep",
+        "coaching": "advanced"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+`workflow_enum` is designed as the first phase of a structured engagement. Pass the hosts and services it discovers to `workflow_scan` for the vulnerability assessment phase.
+</Note>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the workflow completed without a fatal error.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The target that was enumerated.
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  The scope setting used during execution.
+</ResponseField>
+
+<ResponseField name="depth" type="string">
+  The depth setting used during execution.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Aggregated output from all tools executed by the workflow. When `coaching` is `beginner`, this includes explanatory text interspersed with tool output. When `coaching` is `advanced`, it contains raw tool output only.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Total elapsed time in milliseconds across all tool invocations.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

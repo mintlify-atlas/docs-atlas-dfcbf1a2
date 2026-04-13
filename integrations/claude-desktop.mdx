@@ -1,0 +1,300 @@
+---
+title: "Claude Desktop integration for RedQuanta MCP"
+description: "Connect RedQuanta MCP to Claude Desktop App to run penetration testing tools through natural language on Windows, macOS, and Linux."
+keywords: ["claude desktop", "MCP", "redquanta", "integration", "stdio", "penetration testing"]
+icon: "message-bot"
+---
+
+RedQuanta MCP integrates directly with the Claude Desktop App via the Model Context Protocol, letting you invoke network scanners, web fuzzers, and vulnerability tools by describing what you want in plain language. Claude handles tool selection and result interpretation — you focus on the assessment.
+
+## Prerequisites
+
+Before you configure Claude Desktop, make sure you have the following installed:
+
+- **Claude Desktop App** — download from [claude.ai/download](https://claude.ai/download)
+- **Node.js 20 LTS** — download from [nodejs.org](https://nodejs.org/en/download/)
+- **Git** — to clone the repository
+
+System requirements: Windows 10 (1903+) or 11, macOS 10.15+, or Ubuntu 18.04+/CentOS 7+, with at least 2 GB available RAM and 500 MB free storage.
+
+## Setup
+
+<Steps>
+  <Step title="Install RedQuanta MCP">
+    Clone the repository, install dependencies, build the project, and create the jail directory:
+
+    ```bash
+    git clone https://github.com/sc4rfurry/RedQuanta-MCP.git
+    cd RedQuanta-MCP
+    npm install
+    npm run build
+    mkdir -p vol
+    ```
+  </Step>
+
+  <Step title="Locate the Claude Desktop config file">
+    The config file path depends on your operating system:
+
+    <Tabs>
+      <Tab title="Windows">
+        ```
+        %APPDATA%\Claude\claude_desktop_config.json
+        ```
+      </Tab>
+      <Tab title="macOS">
+        ```
+        ~/Library/Application Support/Claude/claude_desktop_config.json
+        ```
+      </Tab>
+      <Tab title="Linux">
+        ```
+        ~/.config/claude/claude_desktop_config.json
+        ```
+      </Tab>
+    </Tabs>
+
+    If the file does not exist, create it. The directory must exist before you create the file.
+  </Step>
+
+  <Step title="Add RedQuanta MCP to the config">
+    Open the config file and add the `redquanta-mcp` entry under `mcpServers`. Use the OS-specific example below — replace the paths with your actual installation directory.
+
+    <Tabs>
+      <Tab title="Windows">
+        ```json claude_desktop_config.json
+        {
+          "mcpServers": {
+            "redquanta-mcp": {
+              "command": "node",
+              "args": ["D:\\Projects\\RedQuanta-MCP\\dist\\server.js"],
+              "cwd": "D:\\Projects\\RedQuanta-MCP",
+              "env": {
+                "NODE_ENV": "production",
+                "MCP_MODE": "stdio",
+                "MCP_LOG_LEVEL": "info",
+                "LOG_LEVEL": "info",
+                "WEB_SEARCH_ENABLED": "true",
+                "CACHE_ENABLED": "true",
+                "CACHE_TTL": "600",
+                "DANGEROUS_MODE": "false",
+                "DOCKER_ENABLED": "true",
+                "JAIL_ROOT": "D:\\Projects\\RedQuanta-MCP\\vol",
+                "REAL_EXECUTION": "true",
+                "SIMULATION_MODE": "false",
+                "NODE_OPTIONS": "--max-old-space-size=2048",
+                "UV_THREADPOOL_SIZE": "4"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="macOS / Linux">
+        ```json claude_desktop_config.json
+        {
+          "mcpServers": {
+            "redquanta-mcp": {
+              "command": "node",
+              "args": ["/Users/username/RedQuanta-MCP/dist/server.js"],
+              "cwd": "/Users/username/RedQuanta-MCP",
+              "env": {
+                "NODE_ENV": "production",
+                "MCP_MODE": "stdio",
+                "MCP_LOG_LEVEL": "info",
+                "LOG_LEVEL": "info",
+                "WEB_SEARCH_ENABLED": "true",
+                "CACHE_ENABLED": "true",
+                "CACHE_TTL": "600",
+                "DANGEROUS_MODE": "false",
+                "DOCKER_ENABLED": "true",
+                "JAIL_ROOT": "/Users/username/RedQuanta-MCP/vol",
+                "REAL_EXECUTION": "true",
+                "SIMULATION_MODE": "false",
+                "NODE_OPTIONS": "--max-old-space-size=2048",
+                "UV_THREADPOOL_SIZE": "4"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Restart Claude Desktop">
+    Close Claude Desktop completely, wait five seconds for all processes to exit, then relaunch it. Watch for MCP status indicators in the interface during startup.
+  </Step>
+</Steps>
+
+## Environment variables
+
+Every key in the `env` block controls a specific behavior of the MCP server. The table below explains each variable.
+
+| Variable | Description | Default | Accepted values |
+|---|---|---|---|
+| `NODE_ENV` | Runtime environment | `production` | `development`, `production` |
+| `MCP_MODE` | Communication mode — use `stdio` for Claude Desktop | `stdio` | `stdio`, `rest` |
+| `MCP_LOG_LEVEL` | MCP protocol logging verbosity | `info` | `error`, `warn`, `info`, `debug` |
+| `LOG_LEVEL` | General application logging verbosity | `info` | `error`, `warn`, `info`, `debug` |
+| `WEB_SEARCH_ENABLED` | Allow `ddg_search` OSINT tool | `true` | `true`, `false` |
+| `CACHE_ENABLED` | Cache tool results to speed up repeat queries | `true` | `true`, `false` |
+| `CACHE_TTL` | How long cached results stay valid, in seconds | `600` | Any positive integer |
+| `DANGEROUS_MODE` | Unlock destructive operations (brute force, SQLi) | `false` | `true`, `false` |
+| `DOCKER_ENABLED` | Fall back to Docker containers when tools are missing locally | `true` | `true`, `false` |
+| `JAIL_ROOT` | Filesystem sandbox — all file I/O is restricted to this path | `./vol` | Any absolute path |
+| `REAL_EXECUTION` | Execute commands for real rather than dry-running | `true` | `true`, `false` |
+| `SIMULATION_MODE` | Return simulated output without executing tools | `false` | `true`, `false` |
+
+<Warning>
+Only set `DANGEROUS_MODE` to `true` in environments where you have explicit written authorization to test the target systems. This enables brute-force and injection tools that can cause service disruption.
+</Warning>
+
+## Verification
+
+After restarting Claude Desktop, open a new conversation and ask:
+
+> "What security tools are available through RedQuanta MCP?"
+
+Claude should respond with a list that includes `nmap_scan`, `ffuf_fuzz`, `nikto_scan`, `workflow_enum`, and others. If tools appear, the integration is working.
+
+To confirm tool execution, ask:
+
+> "Can you scan 8.8.8.8 for open ports using nmap?"
+
+Claude will call the `nmap_scan` tool, return structured results, and offer security recommendations.
+
+## Usage examples
+
+The prompts below demonstrate natural language interactions that trigger specific tools.
+
+**Network discovery:**
+> "Scan my home network 192.168.1.0/24 to find live hosts and open ports."
+
+Claude runs `nmap_scan` against the subnet and returns a host list with port details and security observations.
+
+**Web application assessment:**
+> "Perform a comprehensive security scan of example.com."
+
+Claude orchestrates `workflow_scan`, covering directory enumeration, vulnerability scanning, and SSL analysis.
+
+**Incident investigation:**
+> "I suspect brute-force attempts against SSH on 10.0.0.50 — help me investigate."
+
+Claude runs `nmap_scan` with SSH-focused scripts, reports authentication configuration findings, and recommends hardening steps.
+
+## Advanced configuration
+
+### Enabling dangerous mode
+
+To unlock dangerous operations (file writes, advanced scanning flags, and dangerous plugin execution), set `DANGEROUS_MODE` to `true` in the `env` block:
+
+```json
+{
+  "env": {
+    "DANGEROUS_MODE": "true"
+  }
+}
+```
+
+### Performance tuning for large assessments
+
+For scans covering large IP ranges or many targets, increase Node.js memory and thread pool size:
+
+```json
+{
+  "env": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "UV_THREADPOOL_SIZE": "8",
+    "CACHE_TTL": "1800"
+  }
+}
+```
+
+### Custom jail root
+
+To store output files in a different location, set an absolute path:
+
+```json
+{
+  "env": {
+    "JAIL_ROOT": "C:/PentestJail"
+  }
+}
+```
+
+## Available tools
+
+### Network tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `nmap_scan` | Network discovery and port scanning | No |
+| `masscan_scan` | High-speed port scanning | No |
+| `workflow_enum` | Automated network enumeration | No |
+
+### Web tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `ffuf_fuzz` | Fast web directory and file fuzzing | No |
+| `nikto_scan` | Web vulnerability scanning | No |
+| `workflow_scan` | Comprehensive web security assessment | No |
+
+### Automation and system tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `workflow_enum` | Automated multi-phase enumeration | No |
+| `filesystem_ops` | Secure file management within jail | No |
+| `plugin_system` | Dynamic tool loading and management | No |
+| `ddg_search` | OSINT via DuckDuckGo web search | No |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Claude Desktop can't find the MCP server">
+    Verify Node.js is version 20 or higher:
+
+    ```bash
+    node --version
+    ```
+
+    Confirm the server starts on its own:
+
+    ```bash
+    node /path/to/RedQuanta-MCP/dist/server.js --mode stdio
+    ```
+
+    Check the config file for JSON syntax errors:
+
+    ```bash
+    cat ~/.config/claude/claude_desktop_config.json | jq .
+    ```
+
+    On macOS use `~/Library/Application Support/Claude/claude_desktop_config.json`, and on Windows use `%APPDATA%\Claude\claude_desktop_config.json`.
+  </Accordion>
+
+  <Accordion title="Tools appear but execution fails">
+    Check that the jail directory exists and is writable:
+
+    ```bash
+    ls -la /path/to/RedQuanta-MCP/vol
+    ```
+
+    Confirm the environment variables are set correctly:
+
+    ```bash
+    env | grep -E "(JAIL_ROOT|DANGEROUS_MODE|REAL_EXECUTION)"
+    ```
+
+    Run a tool directly from the CLI to isolate whether the issue is in the MCP layer or the tool itself:
+
+    ```bash
+    node dist/cli.js nmap_scan 8.8.8.8
+    ```
+  </Accordion>
+
+  <Accordion title="Server starts but Claude shows no tools">
+    Make sure `MCP_MODE` is set to `stdio`. The REST mode (`rest`) is incompatible with Claude Desktop's stdio transport. Restart Claude Desktop after any config change — the app does not hot-reload the MCP config.
+  </Accordion>
+</AccordionGroup>

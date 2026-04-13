@@ -1,0 +1,189 @@
+---
+title: "Server modes: stdio, REST, and hybrid"
+description: "When to run RedQuanta MCP in stdio mode for AI assistants, REST mode for API integrations, or hybrid mode for both simultaneously—and how to configure each."
+keywords: ["server modes", "stdio", "REST API", "hybrid", "MCP_MODE", "JSON-RPC", "Fastify", "port 5891"]
+---
+
+RedQuanta MCP can run as a pure MCP server over stdin/stdout, as a standalone HTTP API, or as both at the same time. The right choice depends on who or what is consuming the server: AI assistants use the stdio transport, external services or dashboards use the REST transport, and teams that need both simultaneously use hybrid mode. You select the mode with a single environment variable before starting the server.
+
+## Comparing modes
+
+<Tabs>
+  <Tab title="stdio">
+    JSON-RPC over stdin/stdout. The server never opens a network socket. All tool results are cleaned of ANSI escape sequences and emoji before serialization so that MCP parsers receive valid JSON.
+
+    **Best for**: Claude Desktop, Cursor, and any MCP-compatible AI client.
+
+    ```bash
+    MCP_MODE=stdio node dist/server.js
+    ```
+
+    What the server does differently in stdio mode:
+
+    - Pino logging level is set to `silent` — no log output reaches stdout
+    - All console messages go to stderr using `[RedQuanta-MCP]` prefix
+    - Every string in tool results passes through `cleanResultForMCP()`, which strips ANSI codes, Unicode control characters, and emoji
+    - No Fastify instance is created — HTTP port 5891 is never opened
+  </Tab>
+  <Tab title="REST">
+    Fastify HTTP server on port 5891 with Swagger UI at `/docs`. Suitable for programmatic integration over HTTP.
+
+    **Best for**: Web dashboards, CI/CD pipelines, custom scripts, and API-to-API integrations.
+
+    ```bash
+    MCP_MODE=rest node dist/server.js
+    ```
+
+    What the server provides in REST mode:
+
+    - Swagger UI at `http://HOST:PORT/docs` with full OpenAPI 3.0.3 spec
+    - Health check at `http://HOST:PORT/health`
+    - Rate limiting: 100 requests per minute per IP
+    - Helmet CSP headers, CORS, and `no-new-privileges` security defaults
+    - Normal console output — emojis and ANSI colors are allowed
+  </Tab>
+  <Tab title="hybrid">
+    Both transports run simultaneously in the same process. The stdio JSON-RPC transport and the Fastify HTTP server start concurrently.
+
+    **Best for**: Teams that use an AI assistant for interactive sessions and also want to drive scans from external tooling or monitoring systems.
+
+    ```bash
+    MCP_MODE=hybrid node dist/server.js
+    ```
+
+    In hybrid mode the server:
+
+    - Connects `StdioServerTransport` and then starts Fastify
+    - Writes REST API messages to console and MCP messages to stderr
+    - Exposes all ten tools through both interfaces simultaneously
+  </Tab>
+</Tabs>
+
+## stdio mode in depth
+
+stdio mode is the standard transport for MCP-compatible AI clients. The client process spawns `node dist/server.js` and communicates with it over the process's stdin and stdout channels.
+
+<Steps>
+  <Step title="Client spawns the server">
+    Your AI client (Claude Desktop, Cursor, etc.) reads your MCP configuration and starts `node dist/server.js` as a child process with `MCP_MODE=stdio`.
+  </Step>
+  <Step title="JSON-RPC handshake">
+    The MCP SDK performs an initialize handshake. The server advertises `tools`, `resources`, and `prompts` capabilities.
+  </Step>
+  <Step title="Tool calls flow over stdin">
+    The client sends `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"nmap_scan","arguments":{...}},"id":1}` to stdin.
+  </Step>
+  <Step title="Server processes and responds">
+    The server validates arguments, executes the binary, cleans the output, logs the audit event, and writes the JSON-RPC response to stdout.
+  </Step>
+</Steps>
+
+### Why output cleaning matters
+
+In stdio mode, anything written to stdout that is not valid JSON-RPC breaks the client parser. RedQuanta MCP removes all sources of contamination before serializing results:
+
+```typescript src/server.ts
+private cleanMessageForMCP(message: string): string {
+  return message
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')   // ANSI escape sequences
+    .replace(/\u001b\[2K/g, '')                  // clear-line sequences
+    .replace(/[\u{1F600}-\u{1F64F}]/gu, '')      // emoji range
+    // ... additional patterns
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+```
+
+This means scan output from tools like nmap (which writes colored TTY output) arrives at the LLM as clean, parseable text.
+
+## REST mode in depth
+
+REST mode starts a Fastify server secured with `@fastify/helmet` and `@fastify/rate-limit`. The OpenAPI specification is served at `/docs` via `@fastify/swagger-ui`.
+
+```
+http://HOST:PORT/          # root
+http://HOST:PORT/health    # health check endpoint
+http://HOST:PORT/docs      # Swagger UI (interactive)
+```
+
+The Helmet configuration enforces a Content Security Policy that allows the Swagger UI assets from `cdn.jsdelivr.net` and `unpkg.com` while blocking everything else:
+
+```typescript src/server.ts
+await this.app.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+      objectSrc: ["'none'"],
+      frameSrc: ["'none'"]
+    }
+  }
+});
+```
+
+## Configuring each mode
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_MODE` | `stdio` | One of `stdio`, `rest`, or `hybrid` |
+| `HOST` | `0.0.0.0` | Interface to bind in REST or hybrid mode |
+| `PORT` | `5891` | Port to listen on in REST or hybrid mode |
+| `LOG_LEVEL` | `info` | Pino log level (`silent`, `debug`, `info`, `warn`, `error`) |
+
+### Example: Claude Desktop (stdio)
+
+```json claude_desktop_config.json
+{
+  "mcpServers": {
+    "redquanta-mcp": {
+      "command": "node",
+      "args": ["./dist/server.js"],
+      "cwd": "/path/to/RedQuanta-MCP",
+      "env": {
+        "MCP_MODE": "stdio",
+        "JAIL_ROOT": "/path/to/RedQuanta-MCP/vol"
+      }
+    }
+  }
+}
+```
+
+### Example: REST API server
+
+```bash
+MCP_MODE=rest \
+PORT=5891 \
+HOST=127.0.0.1 \
+JAIL_ROOT=/opt/redquanta/vol \
+node dist/server.js
+```
+
+### Example: Hybrid mode
+
+```bash
+MCP_MODE=hybrid \
+PORT=5891 \
+HOST=0.0.0.0 \
+JAIL_ROOT=/opt/redquanta/vol \
+node dist/server.js
+```
+
+<Warning>
+In hybrid mode the server writes REST API startup messages to stdout. This can interfere with stdio parsers if your AI client captures stdout from the child process. Use hybrid mode only when you control how the client spawns the server and can redirect REST logs to a file or stderr.
+</Warning>
+
+## When to use each mode
+
+| Scenario | Recommended mode |
+|---|---|
+| Connecting to Claude Desktop or Cursor | stdio |
+| Driving scans from a script or CI pipeline | REST |
+| Interactive AI session + external monitoring | hybrid |
+| Development and debugging with browser UI | REST |
+| Production AI assistant integration | stdio |
+
+<Tip>
+Start with stdio mode for AI client integrations. Switch to REST or hybrid only when you have a specific need for HTTP access, such as a reporting dashboard or an automated pipeline that polls scan results.
+</Tip>

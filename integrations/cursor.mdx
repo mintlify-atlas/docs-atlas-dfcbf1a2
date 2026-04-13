@@ -1,0 +1,258 @@
+---
+title: "Cursor integration for RedQuanta MCP"
+description: "Add RedQuanta MCP as a server in Cursor AI to run security scanning and enumeration tools directly from the editor's AI chat."
+keywords: ["cursor", "MCP", "redquanta", "integration", "penetration testing", "AI editor"]
+icon: "arrow-pointer"
+---
+
+RedQuanta MCP works as an MCP server inside Cursor, giving the editor's AI chat access to network scanners, web fuzzers, and workflow automation tools. Once configured, you can trigger security tools by mentioning them in chat — no terminal switching required.
+
+## Prerequisites
+
+- Cursor editor installed (any recent version with MCP support)
+- Node.js 20 LTS installed
+- RedQuanta MCP cloned, built, and ready:
+
+  ```bash
+  git clone https://github.com/sc4rfurry/RedQuanta-MCP.git
+  cd RedQuanta-MCP
+  npm install
+  npm run build
+  mkdir -p vol
+  ```
+
+## Setup
+
+<Steps>
+  <Step title="Open Cursor settings">
+    Press `Ctrl+,` on Windows/Linux or `Cmd+,` on macOS to open the settings panel. Search for **MCP** or **Model Context Protocol** to find the relevant section.
+  </Step>
+
+  <Step title="Add the RedQuanta MCP server">
+    Add the following block to your Cursor settings JSON. Replace `.` in `cwd` with the absolute path to your `RedQuanta-MCP` directory if Cursor is not opened from that folder.
+
+    ```json cursor settings
+    {
+      "mcp": {
+        "servers": {
+          "redquanta": {
+            "command": "node",
+            "args": [
+              "./dist/server.js",
+              "--mode=stdio"
+            ],
+            "cwd": ".",
+            "env": {
+              "NODE_ENV": "development",
+              "LOG_LEVEL": "info",
+              "JAIL_ROOT": "./vol",
+              "DANGEROUS_MODE": "false"
+            }
+          }
+        }
+      }
+    }
+    ```
+
+    <Note>
+      Always use absolute paths for `cwd` and `JAIL_ROOT` if you open Cursor from different working directories. Relative paths are resolved from wherever Cursor launches.
+    </Note>
+  </Step>
+
+  <Step title="Restart Cursor">
+    Close Cursor completely and reopen it. Cursor loads MCP server configurations at startup — changes do not take effect without a restart.
+  </Step>
+
+  <Step title="Verify the integration">
+    Look for **RedQuanta MCP** in Cursor's MCP server status area. In a new chat, type `@redquanta` — Cursor should autocomplete the mention and suggest available tools.
+  </Step>
+</Steps>
+
+## Using security tools in Cursor chat
+
+Once RedQuanta MCP is active, interact with it by mentioning `@redquanta-mcp` in your chat messages. Cursor routes the request to the appropriate tool and returns structured output inline.
+
+**Network reconnaissance:**
+```
+@redquanta-mcp Scan 192.168.1.0/24 for live hosts and open services.
+```
+
+Cursor calls `nmap_scan` and `workflow_enum` in sequence, returning a host list with port details and service identification.
+
+**Web application testing:**
+```
+@redquanta-mcp Analyze the security of https://example.com
+```
+
+Cursor orchestrates `ffuf_fuzz` for directory enumeration, `nikto_scan` for vulnerability detection, and compiles the results into a single report.
+
+**Tool documentation:**
+```
+@redquanta-mcp What tools are available for web testing?
+```
+
+Cursor queries the MCP tools list and returns a categorized list of web-focused tools with usage parameters and safety notes.
+
+## Configuration reference
+
+### Manual testing the server connection
+
+Before relying on Cursor to invoke tools, confirm the server responds correctly over stdio:
+
+<Tabs>
+  <Tab title="Windows (PowerShell)">
+    ```powershell
+    $env:JAIL_ROOT = ".\vol"
+    $env:MCP_MODE = "stdio"
+    node dist/server.js
+    ```
+
+    In a second terminal, send a tools list request:
+
+    ```powershell
+    $env:MCP_MODE = "stdio"; echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | node dist/server.js
+    ```
+  </Tab>
+  <Tab title="macOS / Linux">
+    ```bash
+    JAIL_ROOT=./vol MCP_MODE=stdio node dist/server.js
+    ```
+
+    In a second terminal:
+
+    ```bash
+    echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | MCP_MODE=stdio node dist/server.js
+    ```
+  </Tab>
+</Tabs>
+
+A valid response includes a `result.tools` array listing all available tools.
+
+### Enabling dangerous mode
+
+Set `DANGEROUS_MODE` to `true` to unlock brute-force and SQL injection tools. Only do this in environments where you have written authorization to test:
+
+```json
+{
+  "env": {
+    "DANGEROUS_MODE": "true"
+  }
+}
+```
+
+### Enabling debug logging
+
+When troubleshooting tool failures, switch to debug logging to see full request and response details:
+
+```json
+{
+  "env": {
+    "LOG_LEVEL": "debug"
+  }
+}
+```
+
+### Alternate config file method
+
+If you prefer to manage the config as a separate file, copy it to Cursor's user settings directory:
+
+<Tabs>
+  <Tab title="Windows">
+    ```powershell
+    cp cursor-mcp-config.json "$env:APPDATA\Cursor\User\cursor-mcp.json"
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    cp cursor-mcp-config.json ~/Library/Application\ Support/Cursor/User/cursor-mcp.json
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    cp cursor-mcp-config.json ~/.config/Cursor/User/cursor-mcp.json
+    ```
+  </Tab>
+</Tabs>
+
+Edit the copied file to update all paths to match your system before restarting Cursor.
+
+## Available tools
+
+### Network tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `nmap_scan` | Network discovery and port scanning | No |
+| `masscan_scan` | High-speed port scanning | No |
+| `workflow_enum` | Automated network enumeration | No |
+
+### Web tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `ffuf_fuzz` | Fast web directory and file fuzzing | No |
+| `nikto_scan` | Web vulnerability scanning | No |
+
+### Workflow and system tools
+
+| Tool | Description | Requires dangerous mode |
+|---|---|---|
+| `workflow_enum` | Automated multi-phase enumeration | No |
+| `workflow_scan` | Multi-phase vulnerability scanning | No |
+| `filesystem_ops` | Secure file management within jail | No |
+| `plugin_system` | Dynamic tool management | No |
+
+## Success indicators
+
+When the integration is working correctly, you will see:
+
+- **RedQuanta MCP** listed in Cursor's MCP servers panel
+- `@redquanta-mcp` autocompletes in the chat input
+- Tools execute and return formatted results in the chat thread
+- Multi-tool workflows like `workflow_scan` run end-to-end
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Server won't start">
+    Reinstall dependencies and rebuild:
+
+    ```bash
+    npm install
+    npm run build
+    node --check dist/server.js
+    ```
+
+    If `node --check` reports syntax errors, the build did not complete successfully. Re-run `npm run build` and look for compilation errors.
+  </Accordion>
+
+  <Accordion title="Cursor can't find the MCP server">
+    Use absolute paths in all config fields. Relative paths like `./dist/server.js` are resolved from Cursor's working directory, which may not be your project folder. Verify that the `vol` directory exists and is writable:
+
+    ```bash
+    ls -la /absolute/path/to/RedQuanta-MCP/vol
+    ```
+
+    Also confirm Cursor has execute permission on the `node` binary and read permission on the project directory.
+  </Accordion>
+
+  <Accordion title="Tools appear but fail to run">
+    Check that the `vol` jail directory exists at the path specified in `JAIL_ROOT`. Tools that write output files will fail silently if the directory is missing or not writable.
+
+    Some tools require `DANGEROUS_MODE=true`. You can check which tools require dangerous mode by asking the AI assistant "Which RedQuanta tools require dangerous mode?"
+
+    Open Cursor's developer console (via **Help → Toggle Developer Tools**) and filter for MCP-related errors to see the raw error message.
+  </Accordion>
+
+  <Accordion title="Slow tool execution or timeouts">
+    Enable result caching (on by default) and avoid running multiple resource-intensive scans concurrently. For complex workflows, run tools sequentially rather than in parallel. If memory pressure is an issue, increase the Node.js heap:
+
+    ```json
+    {
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=4096"
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

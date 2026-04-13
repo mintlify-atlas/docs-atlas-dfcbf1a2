@@ -1,0 +1,201 @@
+---
+title: 'Environment Variables Reference for RedQuanta MCP'
+description: 'Complete reference for all environment variables that control server mode, filesystem jail, caching, web search, and performance tuning in RedQuanta MCP.'
+keywords: ['environment variables', 'configuration', 'MCP_MODE', 'JAIL_ROOT', 'DANGEROUS_MODE', 'RedQuanta']
+---
+
+RedQuanta MCP reads its entire runtime configuration from environment variables, with no required config file. Every aspect of the server — from the network interface it binds to, the filesystem sandbox it enforces, and whether destructive tooling is available — is controlled by a variable with a safe default. Set only the variables you need to change; the rest are applied automatically.
+
+## Server
+
+<ParamField query="HOST" type="string" default="0.0.0.0">
+  IP address the REST API server binds to. Set to `127.0.0.1` to restrict access to localhost only. Has no effect when `MCP_MODE=stdio`.
+</ParamField>
+
+<ParamField query="PORT" type="number" default="5891">
+  TCP port the REST API server listens on. Has no effect when `MCP_MODE=stdio`.
+</ParamField>
+
+<ParamField query="MCP_MODE" type="string" default="stdio">
+  Controls which protocol the server exposes.
+
+  | Value | Description |
+  |-------|-------------|
+  | `stdio` | JSON-RPC over standard input/output. Required for Claude Desktop and AI client integrations. |
+  | `rest` | HTTP REST API only. Suitable for web applications and CI/CD integrations. |
+  | `hybrid` | Both stdio and REST API simultaneously. Maximum integration flexibility. |
+</ParamField>
+
+<ParamField query="NODE_ENV" type="string" default="production">
+  Node.js environment mode. Set to `development` to enable verbose stack traces and debug output. In `production` mode, error messages are sanitized and performance optimizations are active.
+
+  Accepted values: `production`, `development`
+</ParamField>
+
+## Security
+
+<ParamField query="JAIL_ROOT" type="string" default="/tmp/redquanta">
+  Absolute path to the filesystem jail directory. All file read and write operations are restricted to this directory tree. The directory is created automatically on startup if it does not exist. Set this to a dedicated directory with appropriate permissions in production deployments.
+
+  ```bash
+  JAIL_ROOT=/opt/redquanta/vol
+  ```
+</ParamField>
+
+<ParamField query="DANGEROUS_MODE" type="string" default="false">
+  When set to `true`, unlocks write and delete filesystem operations, advanced scanning arguments (OS detection, spoofing, raw packet flags), and dangerous plugins. Leave `false` in all environments where destructive operations are not explicitly authorized.
+
+  <Warning>
+    Enable `DANGEROUS_MODE` only in isolated environments with proper legal authorization. This flag removes safeguards that prevent file deletion, credential brute-forcing, and low-level network manipulation.
+  </Warning>
+
+  Accepted values: `true`, `false`
+</ParamField>
+
+## Logging
+
+<ParamField query="LOG_LEVEL" type="string" default="info">
+  Minimum severity level written to the application log. Use `warn` in production to reduce log volume. Use `debug` when diagnosing unexpected behavior.
+
+  | Value | Output |
+  |-------|--------|
+  | `error` | Errors only |
+  | `warn` | Warnings and errors |
+  | `info` | Normal operation events, warnings, and errors |
+  | `debug` | Full request/response detail and internal state |
+</ParamField>
+
+## Features
+
+<ParamField query="WEB_SEARCH_ENABLED" type="string" default="false">
+  When set to `true`, registers the `web_search`, `ddg_search`, `ddg_spice`, and `domain_intel` tools. These tools make outbound network requests to perform OSINT queries. Disabled by default. Disable in air-gapped or restricted environments.
+
+  Accepted values: `true`, `false`
+</ParamField>
+
+## Caching
+
+<ParamField query="CACHE_ENABLED" type="string" default="true">
+  Controls whether tool results are cached in memory. Set to `false` to force live execution on every request, which is useful during development but increases runtime for repeated scans.
+
+  Accepted values: `true`, `false`
+</ParamField>
+
+<ParamField query="CACHE_TTL" type="number" default="600">
+  Time-to-live for cached results, in seconds. Increase this value for long-running assessment sessions where target state is unlikely to change. Decrease it when you need fresh data on frequently-polled targets.
+
+  ```bash
+  # Cache results for 30 minutes
+  CACHE_TTL=1800
+  ```
+</ParamField>
+
+## Performance
+
+<ParamField query="NODE_OPTIONS" type="string">
+  Node.js runtime flags passed directly to the process. Primarily used to raise the V8 heap size limit for large-scale assessments that process extensive scan output.
+
+  ```bash
+  # Allocate 2 GB heap
+  NODE_OPTIONS=--max-old-space-size=2048
+
+  # Allocate 4 GB for large environments
+  NODE_OPTIONS=--max-old-space-size=4096
+  ```
+</ParamField>
+
+<ParamField query="UV_THREADPOOL_SIZE" type="number">
+  Size of the libuv thread pool used for asynchronous I/O operations. The default is `4`. Increase when running many concurrent tool executions to reduce queuing on I/O-bound operations.
+
+  ```bash
+  UV_THREADPOOL_SIZE=8
+  ```
+</ParamField>
+
+## Extensibility
+
+<ParamField query="REDQUANTA_PLUGIN_PATH" type="string">
+  Absolute path to a directory containing custom plugin modules. RedQuanta MCP scans this directory at startup and registers any valid plugins as additional MCP tools. Omit this variable if you are not using custom plugins.
+
+  ```bash
+  REDQUANTA_PLUGIN_PATH=/opt/redquanta/plugins
+  ```
+</ParamField>
+
+<ParamField query="TELEMETRY_ENDPOINT" type="string">
+  OpenTelemetry collector endpoint URL. When set, RedQuanta MCP emits traces and metrics to the specified endpoint. Omit this variable to disable telemetry.
+
+  ```bash
+  TELEMETRY_ENDPOINT=http://otel-collector:4318
+  ```
+</ParamField>
+
+## Example configurations
+
+<Tabs>
+  <Tab title="Claude Desktop (stdio)">
+    Minimal configuration for Claude Desktop integration. Place this in your `claude_desktop_config.json`:
+
+    ```json claude_desktop_config.json
+    {
+      "mcpServers": {
+        "redquanta-mcp": {
+          "command": "node",
+          "args": ["/path/to/RedQuanta-MCP/dist/server.js"],
+          "cwd": "/path/to/RedQuanta-MCP",
+          "env": {
+            "NODE_ENV": "production",
+            "MCP_MODE": "stdio",
+            "LOG_LEVEL": "info",
+            "JAIL_ROOT": "/path/to/RedQuanta-MCP/vol",
+            "DANGEROUS_MODE": "false",
+            "CACHE_ENABLED": "true",
+            "CACHE_TTL": "600",
+            "WEB_SEARCH_ENABLED": "true",
+            "NODE_OPTIONS": "--max-old-space-size=2048",
+            "UV_THREADPOOL_SIZE": "4"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="REST API server">
+    Configuration for running RedQuanta MCP as a standalone REST API:
+
+    ```bash .env
+    NODE_ENV=production
+    MCP_MODE=rest
+    HOST=0.0.0.0
+    PORT=5891
+    LOG_LEVEL=warn
+    JAIL_ROOT=/opt/redquanta/vol
+    DANGEROUS_MODE=false
+    CACHE_ENABLED=true
+    CACHE_TTL=1800
+    WEB_SEARCH_ENABLED=true
+    NODE_OPTIONS=--max-old-space-size=2048
+    UV_THREADPOOL_SIZE=8
+    ```
+  </Tab>
+  <Tab title="Dangerous mode (authorized testing)">
+    Extended configuration for authorized penetration testing that requires destructive operations:
+
+    ```bash .env
+    NODE_ENV=production
+    MCP_MODE=stdio
+    LOG_LEVEL=info
+    JAIL_ROOT=/opt/redquanta/pentest-jail
+    DANGEROUS_MODE=true
+    CACHE_ENABLED=true
+    CACHE_TTL=600
+    WEB_SEARCH_ENABLED=true
+    NODE_OPTIONS=--max-old-space-size=4096
+    UV_THREADPOOL_SIZE=8
+    ```
+
+    <Warning>
+      Only use this configuration in isolated, authorized environments. `DANGEROUS_MODE=true` enables file write/delete operations and exploitation tools.
+    </Warning>
+  </Tab>
+</Tabs>

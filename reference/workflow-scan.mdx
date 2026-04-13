@@ -1,0 +1,95 @@
+---
+title: "workflow_scan — Multi-Phase Vulnerability Assessment"
+description: "Reference for workflow_scan: target, services array, aggressive mode, service auto-detection, and how vulnerability testing phases are sequenced."
+keywords: ["workflow_scan", "vulnerability assessment", "penetration testing workflow", "MCP tool", "security scanning"]
+---
+
+The `workflow_scan` tool runs a multi-phase vulnerability assessment against a target that has already been enumerated. It follows established penetration testing methodology—reconnaissance, vulnerability scanning, and optional exploitation—treating each identified service as an attack surface and applying appropriate test techniques to each. When no specific services are provided, the workflow auto-detects running services on the target by performing an initial scan, then adapts its vulnerability checks accordingly. This removes the need to know in advance which services are running on a host; `workflow_scan` figures it out and directs the right tools at each one.
+
+<Warning>
+Setting `aggressive: true` enables exploitation attempts and proof-of-concept generation. These operations can cause service disruption or unintended side effects. Use only in authorized testing environments and only when you have explicit written permission to perform exploitation.
+</Warning>
+
+## Parameters
+
+<ParamField path="target" type="string" required>
+  Target system or application for vulnerability assessment. Should be a previously enumerated host with known or discoverable services. Examples: `"192.168.1.100"`, `"webapp.example.com"`, `"api.example.com"`.
+</ParamField>
+
+<ParamField path="services" type="string[]">
+  Specific services to focus vulnerability testing on. When omitted, the workflow auto-detects services by scanning the target first. Providing known services from the `workflow_enum` phase skips the discovery step and directs testing effort more precisely. Examples: `["http", "https", "ssh"]`, `["smtp", "ftp", "telnet"]`.
+</ParamField>
+
+<ParamField path="aggressive" type="boolean" default="false">
+  Enable aggressive testing techniques including exploitation attempts and proof-of-concept generation. Only use with explicit permission and in authorized testing environments. May cause service disruption. Default is `false` for safe, non-destructive scanning.
+</ParamField>
+
+## Service auto-detection
+
+When `services` is not provided, `workflow_scan` performs an initial port and service scan before beginning vulnerability testing. The detected services determine which vulnerability checks run:
+
+| Detected service | Tests applied |
+|---|---|
+| `http` / `https` | Web vulnerability checks, header analysis, directory enumeration |
+| `ssh` | Version-based CVE checks, authentication configuration |
+| `ftp` | Anonymous login, known-vulnerable version checks |
+| `smtp` | Open relay, user enumeration, known CVEs |
+| `smb` | EternalBlue and related checks, anonymous share access |
+
+## Examples
+
+<Tabs>
+  <Tab title="Safe vulnerability assessment">
+    Test HTTP and SSH on a specific host without any exploitation. Safe to run in most authorized environments.
+
+    ```json
+    {
+      "tool": "workflow_scan",
+      "arguments": {
+        "target": "192.168.1.100",
+        "services": ["http", "ssh"],
+        "aggressive": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Full penetration test with exploitation">
+    Run a complete penetration test including exploitation attempts. Requires explicit written authorization.
+
+    ```json
+    {
+      "tool": "workflow_scan",
+      "arguments": {
+        "target": "testapp.example.com",
+        "aggressive": true
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Run `workflow_enum` first to produce a list of confirmed services, then pass that list to `workflow_scan` via the `services` parameter. This avoids redundant scanning and focuses the vulnerability checks on known attack surface.
+</Tip>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the workflow completed without a fatal error.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The target that was assessed.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Aggregated output from all vulnerability checks. Includes findings, severity indicators, and (when `aggressive: true`) exploitation results.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Total elapsed time in milliseconds across all phases.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

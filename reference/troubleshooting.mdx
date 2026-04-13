@@ -1,0 +1,337 @@
+---
+title: 'Troubleshooting guide for RedQuanta MCP deployments'
+description: 'Step-by-step fixes for JSON-RPC parsing errors, Claude Desktop connection failures, tool execution failures, Docker problems, and high memory usage.'
+keywords: ['troubleshooting', 'Claude Desktop', 'JSON-RPC', 'MCP', 'error', 'RedQuanta']
+---
+
+Most problems with RedQuanta MCP fall into a handful of categories: the server cannot start, an AI client cannot connect to it, a tool execution fails silently, or the process consumes unexpected resources. This page covers the specific symptoms and solutions for each known issue, using the exact commands and configuration values that resolve them.
+
+<AccordionGroup>
+
+  <Accordion title="JSON-RPC parsing errors in stdio mode">
+    **Symptom**: The AI client receives malformed JSON or reports an unexpected token error when communicating with the server. You may see log output like:
+
+    ```
+    SyntaxError: Unexpected token '\u001b' in JSON at position 0
+    ```
+
+    **Cause**: ANSI escape sequences (color codes and cursor movements) from libraries that detect a TTY-like environment are being written to stdout, corrupting the JSON-RPC stream.
+
+    **Solution**: Set `MCP_MODE=stdio` in your environment or in `claude_desktop_config.json`. When this mode is active, RedQuanta MCP automatically strips ANSI sequences from all stdout output before it reaches the JSON-RPC layer.
+
+    ```json claude_desktop_config.json
+    {
+      "mcpServers": {
+        "redquanta-mcp": {
+          "command": "node",
+          "args": ["/path/to/RedQuanta-MCP/dist/server.js"],
+          "env": {
+            "MCP_MODE": "stdio"
+          }
+        }
+      }
+    }
+    ```
+
+    To verify the output is clean, pipe a raw JSON-RPC request through the server manually:
+
+    ```bash
+    echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | node dist/server.js
+    ```
+
+    The response should start with `{` and contain no control characters.
+  </Accordion>
+
+  <Accordion title="Claude Desktop can't find the MCP server">
+    **Symptom**: No RedQuanta tools appear in Claude Desktop after setup. The MCP server may show as disconnected or absent in the app's settings.
+
+    **Solution**: Work through the following checks in order.
+
+    <Steps>
+      <Step title="Verify Node.js version">
+        RedQuanta MCP requires Node.js 20 or higher. Run:
+
+        ```bash
+        node --version
+        ```
+
+        The output must show `v20.x.x` or higher. If it does not, install Node.js 20 LTS from [nodejs.org](https://nodejs.org/en/download/) or via a version manager:
+
+        ```bash
+        nvm install 20 && nvm use 20
+        ```
+      </Step>
+      <Step title="Confirm the server starts manually">
+        Before Claude Desktop can connect, the server must be able to start on its own. Run:
+
+        ```bash
+        node dist/server.js
+        ```
+
+        If you see an error here, fix it before adjusting the Claude Desktop configuration. Common causes are a missing `dist/` directory (run `npm run build` first) or a missing `node_modules/` (run `npm install` first).
+      </Step>
+      <Step title="Validate the configuration file syntax">
+        A JSON syntax error in `claude_desktop_config.json` prevents Claude Desktop from loading any MCP servers. Validate the file:
+
+        ```bash
+        # macOS / Linux
+        cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | jq .
+
+        # Linux (alternative path)
+        cat ~/.config/claude/claude_desktop_config.json | jq .
+        ```
+
+        If `jq` reports a parse error, fix the JSON before restarting Claude Desktop.
+      </Step>
+      <Step title="Check the cwd field">
+        The `cwd` field in your config must point to the directory that contains `dist/server.js`. Use an absolute path:
+
+        ```json
+        {
+          "mcpServers": {
+            "redquanta-mcp": {
+              "command": "node",
+              "args": ["dist/server.js"],
+              "cwd": "/absolute/path/to/RedQuanta-MCP"
+            }
+          }
+        }
+        ```
+      </Step>
+      <Step title="Restart Claude Desktop completely">
+        Fully quit Claude Desktop (not just close the window) and relaunch it. Configuration changes are only picked up on a fresh start.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Tools listed but not executing">
+    **Symptom**: Claude Desktop shows the RedQuanta tools, but calling them returns an error or produces no output.
+
+    **Solution**: The most common cause is a misconfigured jail directory.
+
+    Check that `JAIL_ROOT` is set and the directory exists with the correct permissions:
+
+    ```bash
+    ls -la $JAIL_ROOT
+    ```
+
+    If the directory is missing, create it:
+
+    ```bash
+    mkdir -p $JAIL_ROOT
+    chmod 755 $JAIL_ROOT
+    ```
+
+    If `JAIL_ROOT` is not set in your environment, the server defaults to `/tmp/redquanta`. Confirm which value is active by checking your `claude_desktop_config.json` or running:
+
+    ```bash
+    env | grep JAIL_ROOT
+    ```
+
+    For tools like `nmap`, `ffuf`, `nikto`, or `masscan`, confirm the binary is installed and on the PATH:
+
+    ```bash
+    which nmap
+    which ffuf
+    which nikto
+    ```
+
+    If a binary is missing, install it for your platform:
+
+    ```bash
+    # Ubuntu / Debian
+    sudo apt-get install nmap nikto
+
+    # macOS
+    brew install nmap nikto ffuf
+    ```
+
+    <Note>
+    Tools that write output files require `dangerous: true` in the tool call arguments. Read-only operations work in standard mode.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Docker tool execution failures">
+    **Symptom**: Tools that rely on containerized security tools fail with an image not found error or exit with a non-zero code, even when the binary is not installed locally.
+
+    **Solution**: Rebuild the security tools container to ensure all tool images are present and up to date:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml build --no-cache
+    ```
+
+    After the build completes, bring the containers back up:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml up -d
+    ```
+
+    Verify the containers are running:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml ps
+    ```
+
+    To view container logs for a specific service:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml logs -f
+    ```
+  </Accordion>
+
+  <Accordion title="Permission errors on filesystem operations">
+    **Symptom**: Filesystem tool calls return an `EACCES: permission denied` error. Write or delete operations fail even when the path is inside the jail directory.
+
+    **Solution**: There are two independent causes.
+
+    First, check whether the operation requires `dangerous: true`. Write and delete operations are disabled in standard mode. To enable them, set `DANGEROUS_MODE=true` in your environment and pass `"dangerous": true` in the tool arguments.
+
+    <Warning>
+      Only enable `DANGEROUS_MODE` in isolated, authorized environments. It unlocks file write, file delete, and advanced scanning options.
+    </Warning>
+
+    Second, check the permissions on the jail directory itself:
+
+    ```bash
+    ls -la $JAIL_ROOT
+    ```
+
+    The server process must have read and write access. Fix permissions if needed:
+
+    ```bash
+    chmod 755 $JAIL_ROOT
+    ```
+
+    If the server runs as a different user than the directory owner, either change the owner or adjust the group permissions:
+
+    ```bash
+    chown $(whoami) $JAIL_ROOT
+    ```
+  </Accordion>
+
+  <Accordion title="High memory usage">
+    **Symptom**: The Node.js process consumes several hundred megabytes of memory or grows continuously over time. You may see `JavaScript heap out of memory` errors in the logs.
+
+    **Solution**: Set `NODE_ENV=production` to activate V8 optimizations and disable debug instrumentation, and set `LOG_LEVEL=warn` to reduce the volume of log objects held in memory:
+
+    ```bash
+    NODE_ENV=production
+    LOG_LEVEL=warn
+    ```
+
+    Increase `CACHE_TTL` to reduce how often cached results are evicted and recomputed. A value of `1800` (30 minutes) is appropriate for most assessment sessions:
+
+    ```bash
+    CACHE_TTL=1800
+    ```
+
+    If memory usage remains high under load, raise the V8 heap size limit via `NODE_OPTIONS`:
+
+    ```bash
+    NODE_OPTIONS=--max-old-space-size=2048
+    ```
+
+    In `claude_desktop_config.json`, set these in the `env` block:
+
+    ```json
+    {
+      "env": {
+        "NODE_ENV": "production",
+        "LOG_LEVEL": "warn",
+        "CACHE_TTL": "1800",
+        "NODE_OPTIONS": "--max-old-space-size=2048"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Rate limiting errors on the REST API">
+    **Symptom**: REST API requests return HTTP `429 Too Many Requests`. This typically appears in scripts or integrations that issue many requests in quick succession.
+
+    **Solution**: The REST API enforces a default limit of 100 requests per minute per client. Slow down the request rate in your client, or add a delay between calls.
+
+    If you are running an authorized high-throughput integration and need to raise the limit, check whether your deployment configuration exposes a rate limit setting. For ad-hoc testing, introduce a short sleep between requests:
+
+    ```bash
+    # Example: one request per second
+    for target in $(cat targets.txt); do
+      curl -s http://localhost:5891/tools/nmap_scan -d "{\"target\": \"$target\"}"
+      sleep 1
+    done
+    ```
+  </Accordion>
+
+  <Accordion title="Build fails or TypeScript errors">
+    **Symptom**: Running `npm run build` produces TypeScript compilation errors, or the `dist/` directory is missing after a build attempt.
+
+    **Solution**: Confirm you are on Node.js 20 or higher:
+
+    ```bash
+    node --version   # must be v20.x.x or higher
+    npm --version
+    ```
+
+    Install dependencies before building. A missing `node_modules/` directory is the most common cause of build failures:
+
+    ```bash
+    npm install
+    npm run build
+    ```
+
+    If TypeScript errors persist, check the specific error output:
+
+    ```bash
+    npx tsc --noEmit
+    ```
+
+    This lists all type errors without emitting files, making it easier to identify the failing module.
+  </Accordion>
+
+  <Accordion title="Server starts but no tools are available">
+    **Symptom**: The server process starts without errors, but the AI client reports zero tools or the `/tools` endpoint returns an empty list.
+
+    **Solution**: Confirm `MCP_MODE` is set correctly for your client type.
+
+    For Claude Desktop and all other AI clients that communicate over stdio, `MCP_MODE` must be `stdio`:
+
+    ```json claude_desktop_config.json
+    {
+      "env": {
+        "MCP_MODE": "stdio"
+      }
+    }
+    ```
+
+    If you changed the configuration, you must fully restart Claude Desktop for the new value to take effect. Closing and reopening a conversation window is not sufficient — quit the application entirely and relaunch it.
+
+    For the REST API, confirm the server is listening on the expected port:
+
+    ```bash
+    curl http://localhost:5891/health
+    ```
+
+    A healthy response looks like:
+
+    ```json
+    {
+      "status": "healthy",
+      "version": "0.3.0",
+      "tools": 12
+    }
+    ```
+
+    If `tools` is `0`, check that `REAL_EXECUTION` is not set to `false` and that `SIMULATION_MODE` is not set to `true`.
+  </Accordion>
+
+</AccordionGroup>
+
+## Getting help
+
+If the steps above do not resolve your issue, open a bug report on the GitHub repository. Include:
+
+- The exact error message or unexpected behavior you observed
+- Your operating system and Node.js version (`node --version`)
+- The relevant section of your `claude_desktop_config.json` (with any sensitive paths redacted)
+- The last 20–30 lines from today's audit log: `tail -20 logs/audit-$(date +%Y-%m-%d).jsonl`
+
+**GitHub Issues**: [github.com/sc4rfurry/RedQuanta-MCP/issues](https://github.com/sc4rfurry/RedQuanta-MCP/issues)

@@ -1,0 +1,171 @@
+---
+title: "Plugin system overview — RedQuanta MCP"
+description: "Dynamically extend RedQuanta with custom security tools. Understand plugin discovery, danger levels, categories, and the plugin_system MCP tool."
+keywords: ["plugin system", "custom tools", "dynamic loading", "RedQuanta plugins", "plugin_system tool"]
+---
+
+RedQuanta's plugin system lets you integrate custom security tools into the platform without restarting the server. At startup, the `PluginSystem` class scans a set of well-known directories and registers any valid plugin it finds. From that point on, your plugins are available through the `plugin_system` MCP tool alongside all built-in tools — no server restart required.
+
+## How plugin discovery works
+
+When the server initializes, `PluginSystem.initialize()` calls `discoverPlugins()`, which iterates over every configured search path. For each path it finds, the system scans the directory tree: subdirectories trigger a manifest-based load (`plugin.json`), while individual `.js` or `.ts` files are loaded directly. Every successfully loaded plugin is registered and emits an audit log entry with its name, version, category, and danger level.
+
+### Default search paths
+
+RedQuanta scans these paths in order during startup:
+
+| Path | Notes |
+|------|-------|
+| `./plugins` | Primary directory for user plugins |
+| `./src/plugins` | Source-level plugins used during development |
+| `./custom-tools` | Alternative location for standalone tool scripts |
+| `$REDQUANTA_PLUGIN_PATH` | Optional environment variable override |
+
+<Tip>
+Set `REDQUANTA_PLUGIN_PATH` to an absolute path to load plugins from anywhere on the filesystem without touching the default directories.
+</Tip>
+
+## Plugin categories
+
+Every plugin declares a `category` in its `plugin.json` manifest. The `PluginSystem` uses categories to organize plugins and generate statistics. The valid values are:
+
+<AccordionGroup>
+  <Accordion title="network">
+    Tools that perform network-level operations: port scanning, host discovery, traffic analysis, and protocol testing.
+  </Accordion>
+  <Accordion title="web">
+    Tools that target web applications: crawlers, fuzzers, SSL analyzers, and HTTP-based assessment utilities.
+  </Accordion>
+  <Accordion title="exploitation">
+    Tools that attempt to exploit identified vulnerabilities. Plugins in this category typically require `dangerLevel: "dangerous"`.
+  </Accordion>
+  <Accordion title="password">
+    Tools for password cracking, hash analysis, and credential testing.
+  </Accordion>
+  <Accordion title="forensics">
+    Tools for artifact collection, log analysis, and post-compromise investigation.
+  </Accordion>
+  <Accordion title="automation">
+    Workflow orchestration tools that chain multiple operations together.
+  </Accordion>
+  <Accordion title="custom">
+    Default category assigned to single-file plugins with no embedded manifest. Use this for project-specific utilities that don't fit another category.
+  </Accordion>
+</AccordionGroup>
+
+## Danger levels
+
+Plugins declare a `dangerLevel` to communicate risk to the operator. The system enforces this at load time.
+
+| Level | Behavior |
+|-------|----------|
+| `safe` | Loaded unconditionally. Read-only or non-destructive operations. |
+| `caution` | Loaded unconditionally. Operations that may generate noise or have side effects. |
+| `dangerous` | **Blocked by default.** Requires the server to be started with the `--dangerous` flag. |
+
+<Warning>
+Plugins with `dangerLevel: "dangerous"` are silently skipped unless the server is started with `--dangerous`. The server logs a warning for each skipped plugin. Pass `--dangerous` only in authorized engagement environments.
+</Warning>
+
+## The `plugin_system` MCP tool
+
+All plugin management happens through the `plugin_system` tool. It accepts an `action` parameter and, for most actions, a `pluginName`.
+
+### Actions
+
+<AccordionGroup>
+  <Accordion title="list — enumerate loaded plugins">
+    Returns all currently loaded plugins with their name, version, category, and danger level.
+
+    ```json
+    { "action": "list" }
+    ```
+  </Accordion>
+  <Accordion title="info — inspect a single plugin">
+    Returns the full manifest, schema, examples, custom commands, and load metadata for one plugin.
+
+    ```json
+    { "action": "info", "pluginName": "custom-scanner" }
+    ```
+  </Accordion>
+  <Accordion title="execute — run a plugin">
+    Executes the named plugin's `execute()` method with the provided arguments.
+
+    ```json
+    {
+      "action": "execute",
+      "pluginName": "custom-scanner",
+      "pluginArgs": { "target": "192.168.1.1" }
+    }
+    ```
+  </Accordion>
+  <Accordion title="load — dynamically load a plugin">
+    Loads a plugin by name from the configured search paths at runtime, without restarting the server.
+
+    ```json
+    { "action": "load", "pluginName": "my-new-tool" }
+    ```
+  </Accordion>
+  <Accordion title="unload — remove a plugin">
+    Unregisters a loaded plugin. The plugin can be reloaded later with the `load` action.
+
+    ```json
+    { "action": "unload", "pluginName": "my-new-tool" }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Tool parameters
+
+<ParamField body="action" type="string" required>
+  The operation to perform. One of: `list`, `load`, `unload`, `execute`, `info`.
+</ParamField>
+
+<ParamField body="pluginName" type="string">
+  Name of the target plugin. Required for all actions except `list`.
+</ParamField>
+
+<ParamField body="pluginArgs" type="object">
+  Arguments forwarded to the plugin's `execute()` method. Shape varies by plugin — use `info` to inspect the plugin's schema before executing.
+</ParamField>
+
+## Plugin manifest structure
+
+Directory-based plugins require a `plugin.json` file at the root of their folder. The manifest drives discovery, validation, and load-time security checks.
+
+```json
+{
+  "name": "custom-scanner",
+  "version": "1.0.0",
+  "description": "Custom network scanner for internal assets",
+  "author": "Your Name",
+  "category": "network",
+  "dangerLevel": "caution",
+  "entryPoint": "index.js",
+  "dependencies": [],
+  "schema": {
+    "type": "object",
+    "properties": {
+      "target": { "type": "string", "description": "Target IP or hostname" }
+    },
+    "required": ["target"]
+  },
+  "examples": [
+    {
+      "title": "Scan single host",
+      "description": "Run the scanner against a single IP address",
+      "command": "custom-scanner",
+      "parameters": { "target": "192.168.1.1" },
+      "expectedOutput": "Open ports and service fingerprints"
+    }
+  ]
+}
+```
+
+<Note>
+The `name`, `version`, `description`, `category`, and `entryPoint` fields are required. The manifest is rejected and the plugin is skipped if any of them are missing.
+</Note>
+
+## Next steps
+
+Ready to build your own plugin? The [developing plugins](/plugins/developing-plugins) guide walks through the full plugin structure, the `ToolWrapper` base class, and a complete working example.

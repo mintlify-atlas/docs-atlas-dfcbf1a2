@@ -1,97 +1,100 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "RedQuanta MCP: LLM-Native Penetration Testing Platform"
+description: "RedQuanta MCP is an enterprise-grade Model Context Protocol server that connects LLMs to professional security tools—nmap, masscan, ffuf, nikto, and more."
 ---
 
-## Setting up
+RedQuanta MCP transforms penetration testing by exposing industry-standard security tools directly to large language models through the Model Context Protocol. Connect Claude, Cursor, or any MCP-compatible AI to a hardened orchestration platform with built-in security controls, automated workflows, and comprehensive audit logging.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get RedQuanta MCP running with your AI assistant in under 5 minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Security Tools" icon="shield-halved" href="/tools/overview">
+    Explore nmap, masscan, ffuf, nikto, and OSINT tools
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Automated Workflows" icon="diagram-project" href="/tools/workflows">
+    Run multi-phase enumeration and vulnerability assessment workflows
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Tool Reference" icon="book" href="/reference/nmap-scan">
+    Complete parameter reference for every MCP tool
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is RedQuanta MCP?
 
-Everything you need to create world-class documentation.
+RedQuanta MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server built for professional security teams. It bridges the gap between AI assistants and real penetration testing tools, letting you orchestrate complex security assessments through natural language while maintaining enterprise-grade security controls.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="MCP + REST + CLI" icon="server">
+    Three server modes: stdio for AI assistants, REST API with Swagger UI, and hybrid for maximum flexibility
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Security-First Design" icon="lock">
+    Command allowlists, filesystem jail, argument sanitization, and full audit logging on every operation
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Extensible Plugins" icon="puzzle-piece">
+    Load custom tools and scripts dynamically without restarting the server
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Get started in 3 steps
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install and build">
+    Clone the repository, install dependencies, and build the TypeScript project.
+
+    ```bash
+    git clone https://github.com/sc4rfurry/RedQuanta-MCP.git
+    cd RedQuanta-MCP
+    npm install && npm run build
+    ```
+  </Step>
+  <Step title="Connect your AI assistant">
+    Add RedQuanta MCP to your Claude Desktop or Cursor configuration to start using security tools through natural language.
+
+    ```json claude_desktop_config.json
+    {
+      "mcpServers": {
+        "redquanta-mcp": {
+          "command": "node",
+          "args": ["./dist/server.js"],
+          "cwd": "/path/to/RedQuanta-MCP",
+          "env": {
+            "MCP_MODE": "stdio",
+            "JAIL_ROOT": "/path/to/RedQuanta-MCP/vol"
+          }
+        }
+      }
+    }
+    ```
+  </Step>
+  <Step title="Run your first scan">
+    Ask your AI assistant to scan a target you're authorized to test. RedQuanta handles tool execution, argument sanitization, and result formatting automatically.
+
+    ```
+    "Scan 192.168.1.0/24 for live hosts and open ports"
+    "Perform a web security assessment on https://example.com"
+    "Run a full enumeration workflow on 10.0.0.1"
+    ```
+  </Step>
+</Steps>
+
+## Available security tools
+
+<CardGroup cols={2}>
+  <Card title="Network Scanning" icon="network-wired" href="/tools/network-scanning">
+    **nmap_scan** and **masscan_scan** for host discovery, port scanning, and service enumeration across any scale network
+  </Card>
+  <Card title="Web Testing" icon="globe" href="/tools/web-testing">
+    **ffuf_fuzz** for directory discovery and **nikto_scan** for web vulnerability assessment
+  </Card>
+  <Card title="OSINT & Intelligence" icon="magnifying-glass" href="/tools/intelligence">
+    **ddg_search**, **domain_intel**, and **web_search** for threat intelligence and open-source reconnaissance
+  </Card>
+  <Card title="Automated Workflows" icon="gears" href="/tools/workflows">
+    **workflow_enum** and **workflow_scan** orchestrate multiple tools in sequence with adaptive coaching
+  </Card>
+</CardGroup>
+
+<Note>
+RedQuanta MCP is designed exclusively for authorized security testing. Always obtain written permission before scanning any system you don't own. The platform includes built-in safeguards, but you are responsible for legal compliance.
+</Note>

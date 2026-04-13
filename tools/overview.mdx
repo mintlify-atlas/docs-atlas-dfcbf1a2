@@ -1,0 +1,117 @@
+---
+title: "Security tools overview: all RedQuanta MCP tools"
+description: "A complete reference to every tool RedQuanta MCP exposes through the Model Context Protocol—organized by category, with safe vs. dangerous-mode distinctions."
+keywords: ["security tools", "MCP tools", "nmap", "masscan", "ffuf", "nikto", "pentest tools"]
+---
+
+RedQuanta MCP exposes a curated set of professional security tools through the Model Context Protocol. Each tool maps directly to an MCP tool call: you send a tool name and a JSON argument object, and the server executes the underlying binary inside a security-hardened environment and returns a structured JSON response. This page gives you the full picture—what's available, how tools are invoked, and which capabilities require dangerous mode to unlock.
+
+## How MCP tool invocation works
+
+Every tool in RedQuanta MCP follows the same invocation pattern. Your AI client sends an MCP `tools/call` request with a `name` and an `arguments` object. The server validates the arguments against the tool's input schema, sanitizes all command-line arguments through `ArgGuard`, executes the binary inside the filesystem jail, and streams back a structured result.
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "nmap_scan",
+    "arguments": {
+      "target": "192.168.1.0/24",
+      "ports": "top-1000"
+    }
+  }
+}
+```
+
+The response is always a JSON object with a `success` boolean, tool metadata, and a `data` field containing the parsed output from the underlying tool. Errors are returned in the same structure with an `error` field rather than as HTTP errors or exceptions.
+
+## Tools by category
+
+<CardGroup cols={2}>
+  <Card title="Network scanning" icon="network-wired" href="/tools/network-scanning">
+    **nmap_scan** and **masscan_scan** for host discovery, port scanning, and service enumeration at any scale
+  </Card>
+  <Card title="Web testing" icon="globe" href="/tools/web-testing">
+    **ffuf_fuzz** for content discovery and **nikto_scan** for web server vulnerability assessment
+  </Card>
+  <Card title="OSINT and intelligence" icon="magnifying-glass" href="/tools/intelligence">
+    **ddg_search**, **ddg_spice**, **domain_intel**, and **web_search** for open-source reconnaissance and threat intelligence
+  </Card>
+  <Card title="Automated workflows" icon="gears" href="/tools/workflows">
+    **workflow_enum** and **workflow_scan** orchestrate multiple tools across structured phases with adaptive coaching
+  </Card>
+</CardGroup>
+
+## All tools at a glance
+
+### Network tools
+
+| Tool | Description | Dangerous mode required |
+|------|-------------|------------------------|
+| `nmap_scan` | Host discovery, port scanning, service detection. OS fingerprinting and script scanning require `dangerous: true`. | Optional (unlocks `-O`, `-sV`, `-sC`) |
+| `masscan_scan` | High-speed CIDR-range port scanning via asynchronous packet transmission | No |
+
+### Web testing tools
+
+| Tool | Description | Dangerous mode required |
+|------|-------------|------------------------|
+| `ffuf_fuzz` | Directory and content discovery by substituting wordlist entries into the `FUZZ` keyword in URLs | No |
+| `nikto_scan` | Web server scanner testing for 6700+ dangerous files, outdated versions, and misconfigurations | No |
+
+### Intelligence tools
+
+| Tool | Description | Dangerous mode required | Requires `WEB_SEARCH_ENABLED` |
+|------|-------------|------------------------|-------------------------------|
+| `ddg_search` | DuckDuckGo web, image, video, news, and autocomplete search | No | Yes |
+| `ddg_spice` | DuckDuckGo Spice APIs: DNS, weather, currency, stocks, dictionary, time, thesaurus, URL expansion | No | Yes |
+| `domain_intel` | WHOIS, DNS records, SSL certificates, and subdomain enumeration | No | Yes |
+| `web_search` | Security-focused privacy-respecting web search for CVEs and OSINT | No | Yes |
+
+### Workflow tools
+
+| Tool | Description | Dangerous mode required |
+|------|-------------|------------------------|
+| `workflow_enum` | Automated reconnaissance combining nmap, masscan, ffuf, and nikto based on scope and depth | No |
+| `workflow_scan` | Multi-phase vulnerability assessment with auto-detected service scanning | Optional (unlocks exploitation) |
+
+### System tools
+
+| Tool | Description | Dangerous mode required |
+|------|-------------|------------------------|
+| `filesystem_ops` | Read/write operations within the filesystem jail | Write and delete require `dangerous: true` |
+| `plugin_system` | Load, execute, and manage custom security tool plugins | No |
+
+## Safe tools vs. dangerous-mode tools
+
+Most tools run without any elevated permissions and are safe to call from any AI client. The `dangerous` flag unlocks additional capabilities that carry higher risk:
+
+<Tabs>
+  <Tab title="Safe mode (default)">
+    Without `dangerous: true`, all tools operate in a read-only, non-intrusive posture:
+
+    - `nmap_scan` performs TCP connect scans without OS detection or NSE scripts
+    - `filesystem_ops` is read-only — list and read operations work, write and delete do not
+    - `workflow_scan` performs vulnerability identification but does not attempt exploitation
+
+    Safe mode is appropriate for all discovery and reconnaissance phases where you want to minimize detection risk and system impact.
+  </Tab>
+  <Tab title="Dangerous mode">
+    Setting `dangerous: true` on a supported tool unlocks:
+
+    - `nmap_scan`: OS detection (`-O`), version detection (`-sV`), default NSE scripts (`-sC`), and traceroute — more thorough but more detectable
+    - `filesystem_ops`: Write (`write`) and delete (`delete`) operations within the jail
+    - `workflow_scan`: Aggressive exploitation phases and proof-of-concept generation
+
+    <Warning>
+    Always obtain written authorization before enabling dangerous mode against any target. These capabilities can trigger IDS alerts, cause service disruption, and generate significant network traffic.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Intelligence tools and `WEB_SEARCH_ENABLED`
+
+The `ddg_search`, `ddg_spice`, `domain_intel`, and `web_search` tools are only registered when the server starts with `WEB_SEARCH_ENABLED=true`. If this variable is not set, these tools do not appear in the `tools/list` response and cannot be called. Network-scanning and web-testing tools are always available regardless of this setting.
+
+<Note>
+You can check which tools are available at runtime by calling `tools/list` from your MCP client. The server returns only the tools that are currently enabled and configured.
+</Note>

@@ -1,0 +1,132 @@
+---
+title: "ffuf_fuzz — Web Fuzzing and Content Discovery"
+description: "Reference for ffuf_fuzz: FUZZ keyword placement, built-in wordlist presets, extension brute-forcing, and examples for directory, API, and file discovery."
+keywords: ["ffuf", "web fuzzing", "directory discovery", "MCP tool", "web application testing"]
+---
+
+The `ffuf_fuzz` tool wraps FFUF (Fuzz Faster U Fool), a high-performance web fuzzer written in Go designed for systematic content discovery in web applications. It substitutes the `FUZZ` placeholder in a URL with each entry from a wordlist, then records which requests returned valid responses. This technique surfaces hidden directories, unlisted API endpoints, backup files, admin panels, and parameter names that would otherwise go undetected. FFUF is a standard tool in web application penetration testing and bug bounty workflows—its speed and filtering capabilities make it practical on applications of any size.
+
+<Note>
+The `FUZZ` keyword must appear somewhere in the `url` parameter. The tool will not start without it.
+</Note>
+
+## Parameters
+
+<ParamField path="url" type="string" required>
+  Target URL containing the `FUZZ` keyword, which will be replaced with each wordlist entry. The keyword can appear in the path, query string, or subdomain. Examples: `"https://example.com/FUZZ"`, `"https://FUZZ.example.com"`, `"https://api.example.com/v1/FUZZ"`.
+</ParamField>
+
+<ParamField path="wordlist" type="string" default="common">
+  Wordlist to use for fuzzing. Accepts one of the built-in presets below, or a path to a custom wordlist file.
+
+  | Preset | Best for |
+  |---|---|
+  | `common` | General-purpose discovery |
+  | `directories` | Finding hidden directories and admin panels |
+  | `files` | Locating files (combine with `extensions`) |
+  | `api-endpoints` | Enumerating REST and RPC endpoints |
+  | `admin-panels` | Targeting administrative interfaces |
+  | `parameters` | Discovering hidden query parameters |
+  | `subdomains` | Enumerating subdomains (use `FUZZ.example.com`) |
+</ParamField>
+
+<ParamField path="extensions" type="string">
+  Comma-separated file extensions to append to each wordlist entry. Useful for finding configuration files, source code, and backups. Specify without leading dots. Examples: `"php,html,txt"`, `"jsp,asp,aspx"`, `"php,html,txt,bak"`.
+</ParamField>
+
+## Examples
+
+<Tabs>
+  <Tab title="Directory discovery">
+    Discover hidden directories and admin panels using the `directories` wordlist.
+
+    ```json
+    {
+      "tool": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://example.com/FUZZ",
+        "wordlist": "directories"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="API endpoint enumeration">
+    Enumerate API endpoints by fuzzing the path segment after a versioned prefix.
+
+    ```json
+    {
+      "tool": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://api.example.com/v1/FUZZ",
+        "wordlist": "api-endpoints"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="File discovery with extensions">
+    Find configuration files, source files, and backups by combining the `files` wordlist with common extensions.
+
+    ```json
+    {
+      "tool": "ffuf_fuzz",
+      "arguments": {
+        "url": "https://example.com/FUZZ",
+        "wordlist": "files",
+        "extensions": "php,html,txt,bak"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+For subdomain enumeration, place `FUZZ` as the first label of the domain: `"url": "https://FUZZ.example.com"` and set `"wordlist": "subdomains"`.
+</Tip>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the fuzzing run completed without error.
+</ResponseField>
+
+<ResponseField name="tool" type="string" required>
+  Always `"ffuf"`.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  FFUF version, e.g. `"2.0"`.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The URL that was fuzzed (with the `FUZZ` keyword).
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="command" type="string">
+  The full command string executed.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Raw FFUF output. Each line reports a discovered path with its HTTP status code, response size, and word count.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="url" type="string">
+      The fuzzed URL template.
+    </ResponseField>
+    <ResponseField name="wordlist" type="string">
+      The wordlist preset or path that was used.
+    </ResponseField>
+    <ResponseField name="threads" type="number">
+      Number of concurrent threads used (default `200`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

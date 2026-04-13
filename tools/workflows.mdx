@@ -1,0 +1,385 @@
+---
+title: "Automated pentest workflows: workflow_enum and workflow_scan"
+description: "Automate penetration testing phases with workflow_enum and workflow_scan—scope, depth, coaching controls, and MCP prompts for structured security assessments."
+keywords: ["workflow automation", "pentest workflow", "workflow_enum", "workflow_scan", "MCP automation", "enumeration workflow"]
+---
+
+Workflows in RedQuanta MCP orchestrate multiple tools in sequence, following structured penetration testing methodologies so you don't have to manually chain tool calls. `workflow_enum` handles the reconnaissance and enumeration phase: it runs nmap, masscan, ffuf, and nikto in the right order based on your target type and desired depth. `workflow_scan` handles the vulnerability assessment phase: it takes enumerated targets and services and systematically tests them for weaknesses. Both workflows include an adaptive coaching system that adjusts its output verbosity to your experience level.
+
+<Warning>
+Always obtain written authorization before running any workflow against a target. Workflows generate significant network traffic and will be detected by active monitoring systems. The `aggressive` flag in `workflow_scan` enables exploitation attempts that can disrupt services.
+</Warning>
+
+## workflow_enum
+
+`workflow_enum` is the automated enumeration workflow. Given a target and a configuration, it selects and executes the appropriate tools, collects their structured output, and returns a unified result with coaching messages and next-step recommendations.
+
+### What each scope runs
+
+<Tabs>
+  <Tab title="scope: network">
+    The `network` scope focuses on infrastructure discovery:
+
+    1. **Nmap ping sweep** — Identifies live hosts in the target range
+    2. **Port scan** — Scans discovered hosts for open ports (range depends on `depth`)
+    3. **Masscan sweep** (for CIDR targets) — High-speed confirmation of open ports across the range
+
+    Use this scope for internal network assessments, firewall rule validation, and initial attack surface mapping.
+  </Tab>
+  <Tab title="scope: web">
+    The `web` scope focuses on web application enumeration:
+
+    1. **FFUF directory enumeration** — Discovers hidden paths using the `common` wordlist
+    2. **FFUF SSL enumeration** (if target includes HTTPS or port 443) — Repeats discovery over HTTPS
+    3. **Nikto vulnerability scan** — Assesses the web server for dangerous files and misconfigurations
+    4. **Gobuster comprehensive scan** (deep depth only) — Extended directory enumeration with file extensions
+
+    Use this scope when you have a specific web application to assess.
+  </Tab>
+  <Tab title="scope: full">
+    The `full` scope runs both the `network` and `web` scopes in sequence. It provides complete coverage but takes longer and generates more traffic. Use for thorough engagements where time allows comprehensive assessment.
+  </Tab>
+</Tabs>
+
+### What each depth controls
+
+| Depth | Port range | Thread count | Nikto timeout | Gobuster |
+|-------|-----------|--------------|---------------|----------|
+| `light` | 1–1000 | 100 | — (skipped) | No |
+| `normal` | top-1000 | 100 | 300s | No |
+| `deep` | 1–65535 | 200 | 600s | Yes (big.txt) |
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="target (required)">
+    The primary target for enumeration. The workflow adapts its tool selection based on target format:
+
+    - Single IP (`192.168.1.1`) — Host-focused enumeration with full port range
+    - Hostname (`example.com`) — DNS resolution first, then service enumeration
+    - CIDR range (`192.168.1.0/24`) — Network discovery with masscan sweep before nmap
+
+    ```
+    "target": "192.168.1.0/24"
+    "target": "example.com"
+    "target": "10.0.0.1"
+    ```
+  </Accordion>
+  <Accordion title="scope (optional, default: network)">
+    Controls which tools run and what aspects of the target they focus on:
+
+    - `network` — Infrastructure: nmap and masscan
+    - `web` — Application: ffuf and nikto
+    - `full` — Both in sequence
+  </Accordion>
+  <Accordion title="depth (optional, default: normal)">
+    Controls scan intensity:
+
+    - `light` — Basic discovery, minimal traffic
+    - `normal` — Standard enumeration, balanced
+    - `deep` — Exhaustive, includes full port range and extended wordlists
+  </Accordion>
+  <Accordion title="coaching (optional, default: beginner)">
+    Controls the verbosity and style of the guidance messages included in the workflow result:
+
+    **`beginner`** includes:
+    - Explanations of what each phase discovered and why it matters
+    - Safety reminders about authorization and documentation
+    - Guidance on interpreting results
+    - Suggested next steps with context
+
+    **`advanced`** includes:
+    - Concise status messages
+    - Error counts and tool execution summaries
+    - Next-step recommendations without explanatory context
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Internal network recon with guidance">
+    Standard internal network reconnaissance with beginner coaching. A good starting point for less experienced testers working through a structured methodology.
+
+    ```json
+    {
+      "name": "workflow_enum",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "scope": "network",
+        "depth": "normal",
+        "coaching": "beginner"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Comprehensive web assessment">
+    Deep web enumeration of a target domain for an experienced tester who wants concise output.
+
+    ```json
+    {
+      "name": "workflow_enum",
+      "arguments": {
+        "target": "example.com",
+        "scope": "web",
+        "depth": "deep",
+        "coaching": "advanced"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Full engagement enumeration">
+    Complete enumeration of a single host covering both network services and web applications.
+
+    ```json
+    {
+      "name": "workflow_enum",
+      "arguments": {
+        "target": "10.0.0.1",
+        "scope": "full",
+        "depth": "normal",
+        "coaching": "advanced"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Workflow result structure
+
+The `workflow_enum` result includes structured data from every tool that ran, plus coaching messages and next-step recommendations:
+
+```json
+{
+  "success": true,
+  "phase": "enumeration",
+  "target": "192.168.1.0/24",
+  "timeElapsed": 42300,
+  "results": {
+    "ping_sweep": { "success": true, "tool": "nmap", ... },
+    "port_scan": { "success": true, "tool": "nmap", ... },
+    "directory_enumeration": { "success": true, "tool": "ffuf", ... },
+    "web_vulnerability_scan": { "success": true, "tool": "nikto", ... }
+  },
+  "errors": [],
+  "coaching": [
+    "Enumeration is the reconnaissance phase where we gather information about our target.",
+    "We discovered open ports and services - this gives us attack surface visibility.",
+    "Next, we'll scan these services for vulnerabilities.",
+    "Always ensure you have proper authorization before testing!"
+  ],
+  "nextSteps": [
+    "Run vulnerability scanning on discovered services",
+    "Perform service-specific enumeration",
+    "Research CVEs for identified service versions"
+  ]
+}
+```
+
+---
+
+## workflow_scan
+
+`workflow_scan` is the vulnerability assessment workflow. It takes a target and optionally a list of services discovered during enumeration, then systematically tests each service for security weaknesses. HTTP services automatically trigger ffuf directory fuzzing and nikto vulnerability scanning. The `aggressive` flag extends the workflow to include exploitation attempts.
+
+### How service auto-detection works
+
+When you call `workflow_scan` without specifying `services`, the workflow runs an nmap service-version scan (`-sV`) first. It then analyzes the results for HTTP services (checking for ports 80, 8080, 8000, 8443, and 443) and web application patterns. Any detected HTTP service automatically queues a FFUF fuzz and a nikto scan against that service's port.
+
+When you provide `services` explicitly (from a prior `workflow_enum` result), the workflow skips the auto-detection step and goes directly to vulnerability testing against those services.
+
+### What the aggressive flag enables
+
+With `aggressive: false` (default), `workflow_scan` identifies and documents vulnerabilities but does not attempt to exploit them. The scan runs nmap version detection, FFUF directory fuzzing, nikto assessment, and database service detection.
+
+With `aggressive: true`, the workflow adds:
+- Exploitation attempts against discovered vulnerabilities
+- Proof-of-concept generation for confirmed weaknesses
+- Extended nikto scanning with additional plugins
+
+<Warning>
+`aggressive: true` can cause service disruption, write data to databases, and generate exploitation artifacts. Only use it in controlled lab environments or with explicit written authorization for production systems.
+</Warning>
+
+### Parameters
+
+<AccordionGroup>
+  <Accordion title="target (required)">
+    The target system for vulnerability assessment. Should be a specific host that was previously enumerated:
+
+    ```
+    "target": "192.168.1.100"
+    "target": "webapp.example.com"
+    "target": "api.example.com"
+    ```
+  </Accordion>
+  <Accordion title="services (optional)">
+    An array of service names to focus testing on. Leave empty for auto-detection, or provide services from your enumeration results:
+
+    ```json
+    "services": ["http", "https", "ssh"]
+    "services": ["smtp", "ftp", "telnet"]
+    ```
+
+    Providing services skips the initial nmap service-version scan and reduces overall run time.
+  </Accordion>
+  <Accordion title="aggressive (optional, default: false)">
+    Enables exploitation attempts and proof-of-concept generation. Requires explicit authorization. May cause service disruption.
+  </Accordion>
+</AccordionGroup>
+
+### Usage examples
+
+<Tabs>
+  <Tab title="Safe vulnerability assessment">
+    Assess a previously enumerated host for vulnerabilities without exploitation. The safest option for most engagements.
+
+    ```json
+    {
+      "name": "workflow_scan",
+      "arguments": {
+        "target": "192.168.1.100",
+        "services": ["http", "ssh"],
+        "aggressive": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Targeted web service scan">
+    Focus vulnerability testing specifically on web services of a known target.
+
+    ```json
+    {
+      "name": "workflow_scan",
+      "arguments": {
+        "target": "webapp.example.com",
+        "services": ["http", "https"],
+        "aggressive": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Full penetration test with exploitation">
+    Complete vulnerability assessment with exploitation attempts. Use only in authorized test environments.
+
+    ```json
+    {
+      "name": "workflow_scan",
+      "arguments": {
+        "target": "testapp.example.com",
+        "aggressive": true
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Workflow execution phases
+
+<Steps>
+  <Step title="Service enumeration">
+    If `services` is not provided, workflow_scan runs nmap with `-sV` (version detection) to identify what's running on the target. This phase feeds into the rest of the workflow.
+  </Step>
+  <Step title="HTTP service detection">
+    The workflow analyzes the nmap results and identifies HTTP services by port number and service banner. Each HTTP service becomes a separate scanning target.
+  </Step>
+  <Step title="Web vulnerability scanning">
+    For each HTTP service, the workflow runs FFUF directory fuzzing (to map exposed content) and nikto (to check for dangerous files and misconfigurations). Results are keyed by port: `ffuf_80`, `ffuf_443`, `nikto_scan`.
+  </Step>
+  <Step title="Database service scanning">
+    The workflow detects common database services (MySQL on 3306, PostgreSQL on 5432, Redis on 6379, MongoDB on 27017) and applies service-specific checks.
+  </Step>
+  <Step title="Aggressive exploitation (optional)">
+    When `aggressive: true`, the workflow attempts to exploit confirmed vulnerabilities and generate proof-of-concept output.
+  </Step>
+</Steps>
+
+---
+
+## MCP prompts
+
+RedQuanta MCP registers three MCP prompts that your AI client can use to get structured guidance. Prompts are different from tools: instead of executing security tools, they generate customized AI instructions that shape how the AI assistant approaches a task.
+
+### Using MCP prompts
+
+MCP clients that support prompts (such as Claude Desktop) expose them through their prompt or slash-command interface. You select a prompt, fill in its arguments, and the AI receives a customized system instruction built from your inputs.
+
+### pentest_coaching
+
+Generates personalized coaching for penetration testing workflows tailored to your experience level and target type.
+
+<AccordionGroup>
+  <Accordion title="Arguments">
+    | Argument | Required | Description |
+    |----------|----------|-------------|
+    | `experience_level` | Yes | `beginner`, `intermediate`, or `advanced` |
+    | `target_type` | Yes | `network`, `web_app`, `mobile`, or `infrastructure` |
+    | `specific_goal` | No | A specific testing challenge or objective you're working on |
+  </Accordion>
+</AccordionGroup>
+
+**Example invocation:**
+```
+Prompt: pentest_coaching
+experience_level: beginner
+target_type: web_app
+specific_goal: Finding authentication bypasses
+```
+
+### vulnerability_analysis
+
+Analyzes raw scan results and provides actionable remediation recommendations. Pass the output from any RedQuanta MCP tool directly as `scan_results`.
+
+<AccordionGroup>
+  <Accordion title="Arguments">
+    | Argument | Required | Description |
+    |----------|----------|-------------|
+    | `scan_results` | Yes | Raw output from a scan tool or workflow |
+    | `target_context` | No | Additional information about the target environment |
+    | `analysis_depth` | No | `quick`, `detailed`, or `comprehensive` |
+  </Accordion>
+</AccordionGroup>
+
+**Example invocation:**
+```
+Prompt: vulnerability_analysis
+scan_results: [paste nmap or nikto JSON output here]
+target_context: Internal web application, Java/Tomcat stack
+analysis_depth: detailed
+```
+
+### methodology_guide
+
+Generates step-by-step methodology guidance for a specific testing scenario, adapted to your available time.
+
+<AccordionGroup>
+  <Accordion title="Arguments">
+    | Argument | Required | Description |
+    |----------|----------|-------------|
+    | `testing_scenario` | Yes | `external_pentest`, `internal_assessment`, `web_app_test`, or similar |
+    | `time_constraint` | No | `hours`, `days`, or `weeks` |
+  </Accordion>
+</AccordionGroup>
+
+**Example invocation:**
+```
+Prompt: methodology_guide
+testing_scenario: web_app_test
+time_constraint: days
+```
+
+---
+
+## Natural language prompts
+
+When using an AI assistant connected to RedQuanta MCP, you can describe workflow tasks in plain language:
+
+- "Run a full enumeration on 192.168.1.0/24 starting with network discovery"
+- "Do a deep web assessment of example.com with advanced output"
+- "Scan 10.0.0.5 for vulnerabilities on its HTTP and SSH services"
+- "Run a complete pentest workflow against testapp.example.com with exploitation enabled"
+- "Enumerate the network at 172.16.0.0/24 as a beginner-friendly walkthrough"
+
+<Tip>
+Run `workflow_enum` first to map the attack surface, then feed its discovered services into `workflow_scan` for targeted vulnerability assessment. This two-phase approach mirrors the structure of a professional penetration test and gives you the most actionable results.
+</Tip>

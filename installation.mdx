@@ -1,0 +1,269 @@
+---
+title: "Installing RedQuanta MCP: build, Docker, and production"
+description: "Complete installation guide covering clone-and-build, Docker with security tools, Windows startup scripts, and production environment configuration."
+keywords: ["redquanta", "install", "docker", "production", "build", "node.js", "windows", "environment variables"]
+---
+
+RedQuanta MCP supports two installation paths: building from source (recommended for most users) and running a Docker container with pre-installed security tools. This page covers both, along with system requirements, production build steps, Windows-specific setup, and environment variable configuration.
+
+## System requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| Node.js | 20.0.0 | 20 LTS (latest) |
+| RAM | 4 GB | 8 GB |
+| Disk | 10 GB free | 20 GB free |
+| OS | Windows 10 1903+, Ubuntu 18.04+, macOS 10.15+ | Latest stable |
+
+<Note>
+Node.js 20 is a hard requirement enforced by the package engine field. The server will refuse to start on earlier versions.
+</Note>
+
+Optional components:
+
+- **Docker** — required only if you want containerized security tools (Nmap, Masscan, FFUF, Nikto, etc.) rather than locally installed binaries
+- **Python** — required only if you want to build the MkDocs documentation site
+
+## Install from source
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/sc4rfurry/RedQuanta-MCP.git
+    cd RedQuanta-MCP
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Build the project">
+    For development and general use:
+
+    ```bash
+    npm run build
+    ```
+
+    For production deployments (runs clean, compile, and test in sequence):
+
+    ```bash
+    npm run build:prod
+    ```
+
+    <Tip>
+    Use `npm run build:prod` before deploying to any environment that handles real targets. It runs the full test suite and will catch configuration issues before they reach production.
+    </Tip>
+  </Step>
+
+  <Step title="Create the jail directory">
+    The jail directory is the filesystem sandbox RedQuanta uses for all file operations. Create it in the project root:
+
+    ```bash
+    mkdir -p vol
+    ```
+
+    You can use a different path by setting the `JAIL_ROOT` environment variable. Ensure the directory is writable by the user running the server.
+  </Step>
+
+  <Step title="Verify the installation">
+    Run the built-in system check to confirm Node.js version, platform, and configuration files are all in order:
+
+    ```bash
+    node dist/cli.js doctor
+    ```
+
+    Expected output:
+
+    ```
+    RedQuanta MCP System Check:
+
+    ✅ Node.js v20.x.x (OK)
+    ✅ Platform: linux x64
+    ✅ Config: allowedCommands.json found
+    ✅ Config: allowedPaths.json found
+    ```
+  </Step>
+</Steps>
+
+## Docker setup
+
+The Docker image uses a multi-stage build: a Node.js 20 Alpine runtime stage plus a Kali Linux stage that provides the security tools. The final image bundles Nmap, Masscan, Gobuster, Nikto, FFUF, John, and Hydra alongside the compiled server.
+
+<Steps>
+  <Step title="Build the application image">
+    ```bash
+    docker build -t redquanta-mcp .
+    ```
+  </Step>
+
+  <Step title="Build the security tools container">
+    RedQuanta uses a separate Docker Compose file to manage the Kali-based security tools container, which the main server calls via Docker-in-Docker when host tools are unavailable:
+
+    ```bash
+    docker-compose -f docker-security-tools.yml build
+    ```
+  </Step>
+
+  <Step title="Start all services">
+    ```bash
+    docker-compose up -d
+    ```
+
+    The server starts in REST mode on port 5891 by default. Check the status:
+
+    ```bash
+    docker-compose ps
+    docker-compose logs -f app
+    ```
+  </Step>
+
+  <Step title="Verify the container is healthy">
+    ```bash
+    curl http://localhost:5891/health
+    ```
+
+    ```json
+    {
+      "status": "healthy",
+      "version": "0.3.0",
+      "uptime": "30s",
+      "tools": 12
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+The Docker image runs the server as a non-root user (`redquanta`, UID 1001) by default. If you mount external directories as volumes, ensure the permissions allow the `redquanta` user to read and write them.
+</Warning>
+
+## Windows-specific setup
+
+On Windows, RedQuanta ships two convenience startup scripts. These scripts set the required environment variables and start the server without needing to type them manually.
+
+<Tabs>
+  <Tab title="PowerShell">
+    Open PowerShell as your normal user and run:
+
+    ```powershell
+    .\start-server.ps1
+    ```
+
+    For REST mode on a custom port with dangerous mode enabled:
+
+    ```powershell
+    .\start-production.ps1 -Mode rest -Port 8080 -DangerousMode
+    ```
+  </Tab>
+  <Tab title="Command Prompt">
+    Open a Command Prompt window and run:
+
+    ```bat
+    start-windows.bat
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+If PowerShell blocks the script with an execution policy error, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` first, then try again.
+</Note>
+
+## Starting the server manually
+
+If you prefer not to use the scripts, you can start the server directly and control every option via environment variables or CLI flags.
+
+<Tabs>
+  <Tab title="Linux / macOS">
+    ```bash
+    # stdio mode (for MCP clients like Claude Desktop)
+    MCP_MODE=stdio node dist/server.js
+
+    # REST mode
+    MCP_MODE=rest PORT=5891 node dist/server.js
+
+    # Hybrid mode
+    MCP_MODE=hybrid node dist/server.js
+    ```
+  </Tab>
+  <Tab title="Windows PowerShell">
+    ```powershell
+    # stdio mode
+    $env:MCP_MODE="stdio"; node dist/server.js
+
+    # REST mode
+    $env:MCP_MODE="rest"; $env:PORT="5891"; node dist/server.js
+    ```
+  </Tab>
+</Tabs>
+
+## Environment variable reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_MODE` | `stdio` | Server mode: `stdio`, `rest`, or `hybrid` |
+| `PORT` | `5891` | HTTP port for REST and hybrid modes |
+| `HOST` | `0.0.0.0` | Bind address for REST mode |
+| `NODE_ENV` | `production` | Node.js environment; affects logging verbosity |
+| `LOG_LEVEL` | `info` | Logging level: `error`, `warn`, `info`, `debug` |
+| `MCP_LOG_LEVEL` | `info` | MCP-specific log level |
+| `JAIL_ROOT` | `./vol` | Absolute path to the filesystem jail directory |
+| `DANGEROUS_MODE` | `false` | Set to `true` to enable destructive operations |
+| `REAL_EXECUTION` | `true` | Set to `false` to run in simulation mode |
+| `SIMULATION_MODE` | `false` | Set to `true` to simulate tool output without execution |
+| `DOCKER_ENABLED` | `true` | Allow Docker fallback for tools not installed locally |
+| `WEB_SEARCH_ENABLED` | `false` | Enable the `ddg_search`, `ddg_spice`, `domain_intel`, and `web_search` intelligence tools |
+| `CACHE_ENABLED` | `true` | Enable result caching to reduce redundant executions |
+| `CACHE_TTL` | `600` | Cache time-to-live in seconds |
+
+<Warning>
+Never set `DANGEROUS_MODE=true` in a shared or production environment unless you have a documented authorization scope. Dangerous mode enables file writes, SQL injection testing, password cracking, and brute-force attacks.
+</Warning>
+
+## Production configuration
+
+For production deployments, set these environment variables to minimize log noise and maximize performance:
+
+```bash
+NODE_ENV=production
+LOG_LEVEL=warn
+CACHE_ENABLED=true
+CACHE_TTL=1800
+WEB_SEARCH_ENABLED=true
+DANGEROUS_MODE=false
+```
+
+To limit memory consumption under load:
+
+```bash
+node --max-old-space-size=1024 dist/server.js
+```
+
+### Pre-deployment checklist
+
+Before going live, confirm:
+
+- `npm run build:prod` completed without errors (clean + compile + tests)
+- Docker containers are built and running if you use containerized tools
+- `JAIL_ROOT` directory exists and is writable
+- `logs/` directory is writable for audit log output
+- `DANGEROUS_MODE` is `false` unless explicitly required
+- `config/allowedCommands.json` and `config/allowedPaths.json` have been reviewed for your environment
+
+## Monitoring and logs
+
+Audit logs are written to `logs/audit-YYYY-MM-DD.jsonl`. Each line is a JSON object recording the tool name, arguments, outcome, and timestamp.
+
+In REST and hybrid modes, a health endpoint is available at `http://host:port/health` and interactive API documentation at `http://host:port/docs`.
+
+For containerized deployments:
+
+```bash
+# Stream application logs
+docker-compose logs -f app
+
+# Check container health
+docker-compose ps
+```

@@ -1,0 +1,146 @@
+---
+title: "nmap_scan — Network Discovery and Port Scanning"
+description: "Complete parameter reference for the nmap_scan tool: target formats, dangerous mode, port presets, and structured result fields for network reconnaissance."
+keywords: ["nmap", "port scan", "network discovery", "MCP tool", "penetration testing"]
+---
+
+The `nmap_scan` tool wraps the industry-standard Nmap network mapper, exposing its host discovery, port scanning, and service detection capabilities through the MCP interface. It supports single hosts, CIDR ranges, and IP range notation, making it suitable for everything from a quick single-host check to a full subnet sweep. When `dangerous` mode is off (the default), the tool performs a straightforward TCP connect scan that is safe to run in most authorized testing scenarios. Enabling `dangerous` adds OS fingerprinting, version detection, default NSE scripts, and traceroute—significantly more data at the cost of increased detectability.
+
+<Warning>
+Only scan systems you are authorized to test. Nmap with `dangerous: true` is noisy and will trigger intrusion detection systems.
+</Warning>
+
+## Parameters
+
+<ParamField path="target" type="string" required>
+  Target specification for scanning. Accepts single IP addresses (`192.168.1.1`), hostnames (`example.com`), IP ranges (`192.168.1.1-254`), CIDR networks (`192.168.1.0/24`), or multiple targets separated by spaces.
+</ParamField>
+
+<ParamField path="dangerous" type="boolean" default="false">
+  Enable aggressive scanning techniques including OS detection (`-O`), version detection (`-sV`), script scanning (`-sC`), and traceroute (`--traceroute`). Produces richer results but is more detectable and may trigger security systems. Use only with explicit written permission.
+</ParamField>
+
+<ParamField path="ports" type="string" default="top-1000">
+  Port specification for scanning. Accepts specific ports (`80,443,22`), port ranges (`1-1000`), the preset `top-1000` for the most common 1000 ports, or the full range `1-65535`. Defaults to `top-1000` for efficiency.
+</ParamField>
+
+## Examples
+
+<Tabs>
+  <Tab title="Basic host scan">
+    Scan specific ports on a single host without triggering aggressive detection techniques.
+
+    ```json
+    {
+      "tool": "nmap_scan",
+      "arguments": {
+        "target": "192.168.1.1",
+        "ports": "80,443,22",
+        "dangerous": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Network discovery">
+    Discover live hosts and their top-1000 ports across an entire subnet.
+
+    ```json
+    {
+      "tool": "nmap_scan",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "ports": "top-1000",
+        "dangerous": false
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Comprehensive aggressive scan">
+    Full-range port scan with OS detection, version detection, and NSE scripts. Requires explicit authorization.
+
+    ```json
+    {
+      "tool": "nmap_scan",
+      "arguments": {
+        "target": "example.com",
+        "ports": "1-65535",
+        "dangerous": true
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Start with `dangerous: false` to map open ports, then follow up with `dangerous: true` on specific hosts of interest to avoid unnecessary noise across the whole network.
+</Tip>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the scan completed without error.
+</ResponseField>
+
+<ResponseField name="tool" type="string" required>
+  Always `"nmap"`.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Detected Nmap version, e.g. `"7.95"`. Returns `"unknown"` if the binary cannot report its version.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The target specification passed to the tool.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="command" type="string">
+  The full command string executed, useful for audit and reproduction.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Raw Nmap output. Includes discovered hosts, open ports, service banners, and (when `dangerous: true`) OS guesses and script results.
+</ResponseField>
+
+<ResponseField name="stderr" type="string">
+  Any warnings or error messages from Nmap.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="scanType" type="string">
+      The scan mode used (e.g., `"tcp"`).
+    </ResponseField>
+    <ResponseField name="ports" type="string">
+      The port specification that was scanned.
+    </ResponseField>
+    <ResponseField name="timing" type="string">
+      Nmap timing template used (default `"4"`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  <Expandable title="properties">
+    <ResponseField name="binaryUsed" type="string">
+      Path or name of the Nmap binary invoked.
+    </ResponseField>
+    <ResponseField name="argsCount" type="number">
+      Number of arguments passed to Nmap.
+    </ResponseField>
+    <ResponseField name="timedOut" type="boolean">
+      Whether the scan was terminated by the timeout limit.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="exitCode" type="number">
+  Process exit code. `0` indicates success.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

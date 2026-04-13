@@ -1,0 +1,117 @@
+---
+title: "masscan_scan — High-Speed Internet-Scale Port Scanning"
+description: "Parameter reference for masscan_scan: target ranges, port selection, transmission rate tuning, and guidance on when to use masscan versus nmap."
+keywords: ["masscan", "port scanner", "high-speed scan", "MCP tool", "network reconnaissance"]
+---
+
+The `masscan_scan` tool exposes Masscan's asynchronous packet engine through the MCP interface, enabling high-speed discovery across large IP ranges that would take impractically long with traditional scanners. Masscan uses raw packet transmission and can theoretically scan the entire Internet's IPv4 space in under five minutes at maximum rate, making it the right choice when you need breadth over depth. Unlike Nmap, it does not attempt service fingerprinting or version detection—it only reports which ports responded. Use Masscan for initial large-scale discovery, then hand specific hosts to `nmap_scan` for detailed analysis.
+
+<Warning>
+High transmission rates can overwhelm routers, switches, and firewalls—including your own. Start with the default rate of `1000` pps and increase only after confirming your infrastructure can handle the load. On shared or cloud networks, even moderate rates may violate terms of service.
+</Warning>
+
+## Parameters
+
+<ParamField path="target" type="string" required>
+  Target IP range or address for high-speed scanning. Best suited for CIDR notation (`192.168.0.0/16`) or large IP ranges. Single IPs work but `nmap_scan` provides more detail for individual hosts. Examples: `"192.168.1.0/24"`, `"10.0.0.0/8"`.
+</ParamField>
+
+<ParamField path="ports" type="string" default="1-1000">
+  Port range to scan at high speed. Accepts individual ports (`80,443`), ranges (`1-1000`), or the full range (`1-65535`). Larger ranges take longer but provide more comprehensive coverage.
+</ParamField>
+
+<ParamField path="rate" type="number" default="1000">
+  Transmission rate in packets per second (pps). Higher rates are faster but may overwhelm network infrastructure or trigger security systems. Minimum: `1`, maximum: `1000000`. Start conservatively at `1000` and increase carefully.
+</ParamField>
+
+## Masscan vs. nmap
+
+| Capability | masscan_scan | nmap_scan |
+|---|---|---|
+| Speed at scale | Extremely fast | Slower for large ranges |
+| Service detection | No | Yes (with `dangerous: true`) |
+| OS fingerprinting | No | Yes (with `dangerous: true`) |
+| Best for | Large CIDR ranges | Individual hosts |
+| Stealth | Low (raw packets) | Configurable |
+
+## Examples
+
+<Tabs>
+  <Tab title="Common services on subnet">
+    Fast scan of the most common service ports across a single subnet.
+
+    ```json
+    {
+      "tool": "masscan_scan",
+      "arguments": {
+        "target": "192.168.1.0/24",
+        "ports": "80,443,22,21,25",
+        "rate": 1000
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="High-speed large network scan">
+    Comprehensive port discovery across a large network at an elevated rate. Verify infrastructure capacity before increasing the rate beyond the default.
+
+    ```json
+    {
+      "tool": "masscan_scan",
+      "arguments": {
+        "target": "10.0.0.0/16",
+        "ports": "1-1000",
+        "rate": 10000
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+After running `masscan_scan` to identify open ports, pass the discovered host IPs to `nmap_scan` with `dangerous: true` to retrieve service versions and run NSE scripts for a complete picture.
+</Tip>
+
+## Return value
+
+<ResponseField name="success" type="boolean" required>
+  Whether the scan completed without error.
+</ResponseField>
+
+<ResponseField name="tool" type="string" required>
+  Always `"masscan"`.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Masscan version string, e.g. `"1.3.2"`.
+</ResponseField>
+
+<ResponseField name="target" type="string" required>
+  The target range passed to the tool.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Elapsed time in milliseconds.
+</ResponseField>
+
+<ResponseField name="command" type="string">
+  The full command string executed.
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Raw Masscan output listing open ports per host.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="ports" type="string">
+      The port specification that was scanned.
+    </ResponseField>
+    <ResponseField name="rate" type="number">
+      The transmission rate in pps that was used.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Present only when `success` is `false`. Contains the error message.
+</ResponseField>

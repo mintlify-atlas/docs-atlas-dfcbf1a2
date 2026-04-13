@@ -1,0 +1,125 @@
+{
+  "projectType": "framework",
+  "projectName": "RedQuanta MCP",
+  "projectDescription": "An enterprise-grade Model Context Protocol server that orchestrates penetration testing tools—nmap, masscan, ffuf, nikto, and more—with LLM-native workflows, a plugin system, and multi-layer security controls.",
+  "theme": "aspen",
+  "primaryColor": "#5d6c75",
+  "lightColor": "#b5bec1",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/security-model",
+              "concepts/server-modes"
+            ]
+          },
+          {
+            "group": "Security Tools",
+            "pages": [
+              "tools/overview",
+              "tools/network-scanning",
+              "tools/web-testing",
+              "tools/intelligence",
+              "tools/workflows"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/claude-desktop",
+              "integrations/cursor",
+              "integrations/docker"
+            ]
+          },
+          {
+            "group": "Extending RedQuanta",
+            "pages": [
+              "plugins/overview",
+              "plugins/developing-plugins"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/environment-variables",
+              "reference/allowed-commands",
+              "reference/allowed-paths"
+            ]
+          },
+          {
+            "group": "Tool Reference",
+            "pages": [
+              "reference/nmap-scan",
+              "reference/masscan-scan",
+              "reference/ffuf-fuzz",
+              "reference/nikto-scan",
+              "reference/workflow-enum",
+              "reference/workflow-scan",
+              "reference/filesystem-ops",
+              "reference/plugin-system"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "reference/audit-logging",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "MCP-native server exposing 10+ penetration testing tools via JSON-RPC over stdio or REST",
+    "Automated multi-phase workflows (enumeration, vulnerability scanning) with adaptive coaching",
+    "Extensible plugin system supporting dynamic loading of custom tools and scripts",
+    "Multi-layer security: command allowlists, filesystem jail, path traversal protection, argument sanitization",
+    "Comprehensive audit logging in JSONL format with SARIF report output",
+    "Cross-platform support (Linux, macOS, Windows) with Docker container fallback for tool execution",
+    "OSINT and domain intelligence gathering via DuckDuckGo search APIs",
+    "Three server modes: stdio (MCP), REST API (Fastify + Swagger UI), and hybrid",
+    "Result caching, rate limiting, and OpenTelemetry integration for production deployments"
+  ],
+  "publicApiSurface": [
+    "nmap_scan — network discovery and port scanning",
+    "masscan_scan — high-speed large-scale port scanning",
+    "ffuf_fuzz — web directory and file fuzzing",
+    "nikto_scan — web vulnerability scanning",
+    "workflow_enum — automated enumeration workflow (scope: network|web|full, depth: light|normal|deep)",
+    "workflow_scan — multi-phase vulnerability assessment workflow",
+    "web_search — security-focused OSINT web search",
+    "ddg_search — DuckDuckGo search (web, images, videos, news)",
+    "ddg_spice — DuckDuckGo Spice APIs (DNS, weather, stocks, currency)",
+    "domain_intel — WHOIS, DNS, SSL, and subdomain intelligence",
+    "plugin_system — list/load/unload/execute custom plugins",
+    "filesystem_ops — sandboxed filesystem read/write/list/delete",
+    "redquanta://config — MCP resource: server configuration",
+    "redquanta://tools — MCP resource: available tools catalog",
+    "redquanta://security — MCP resource: security guidelines",
+    "redquanta://status — MCP resource: real-time server health",
+    "pentest_coaching — MCP prompt: personalized pentest coaching",
+    "vulnerability_analysis — MCP prompt: scan result analysis",
+    "methodology_guide — MCP prompt: step-by-step testing methodology",
+    "CLI: redquanta-mcp server|enum|scan|tools|config|doctor"
+  ]
+}
